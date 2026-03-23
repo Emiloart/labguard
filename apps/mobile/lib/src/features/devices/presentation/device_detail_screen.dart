@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/device_registry_provider.dart';
 import '../domain/device_record.dart';
@@ -18,15 +19,32 @@ class DeviceDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final device = ref.watch(deviceByIdProvider(deviceId));
 
-    if (device == null) {
-      return Center(
-        child: Text(
-          'Device not found.',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-      );
-    }
+    return device.when(
+      data: (item) => _DeviceDetailContent(device: item),
+      loading: () => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [LoadingPanel(label: 'Loading device detail')],
+      ),
+      error: (error, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          ErrorPanel(
+            message: error.toString(),
+            onRetry: () => ref.refresh(deviceByIdProvider(deviceId)),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
+class _DeviceDetailContent extends StatelessWidget {
+  const _DeviceDetailContent({required this.device});
+
+  final DeviceRecord device;
+
+  @override
+  Widget build(BuildContext context) {
     final dateFormat = DateFormat('MMM d, yyyy • HH:mm');
 
     return ListView(

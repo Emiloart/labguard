@@ -1,53 +1,44 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
 
+import '../../../core/errors/api_exception.dart';
+import '../../../core/network/labguard_api_client.dart';
+import '../../dashboard/application/dashboard_controller.dart';
 import '../domain/vpn_overview.dart';
 
-final vpnOverviewProvider = Provider<VpnOverview>((ref) {
-  return const VpnOverview(
-    connected: true,
-    serverName: 'Casablanca Primary • wg-01',
-    currentIp: '185.233.44.12',
-    sessionDuration: Duration(hours: 3, minutes: 14),
-    dnsMode: 'Private DNS via tunnel',
-  );
+final vpnOverviewProvider = FutureProvider<VpnOverview>((ref) async {
+  final summary = await ref.watch(dashboardSummaryProvider.future);
+  return summary.vpnOverview;
 });
 
-final vpnServersProvider = Provider<List<String>>((ref) {
-  return const [
-    'Casablanca Primary • wg-01',
-    'Reserved EU Secondary • placeholder',
-  ];
+final vpnRepositoryProvider = Provider<VpnRepository>((ref) {
+  return VpnRepository(client: ref.watch(labGuardApiClientProvider));
 });
 
-final vpnPolicyControllerProvider =
-    NotifierProvider<VpnPolicyController, VpnPolicySettings>(
-      VpnPolicyController.new,
-    );
+final vpnServersProvider = FutureProvider<List<VpnServerRecord>>((ref) async {
+  return ref.watch(vpnRepositoryProvider).fetchServers();
+});
 
-class VpnPolicyController extends Notifier<VpnPolicySettings> {
-  @override
-  VpnPolicySettings build() {
-    return const VpnPolicySettings(
-      killSwitchEnabled: true,
-      autoConnectEnabled: true,
-      reconnectOnNetworkChange: true,
-      customDnsEnabled: true,
-    );
-  }
+class VpnRepository {
+  VpnRepository({required Dio client}) : _client = client;
 
-  void setKillSwitch(bool enabled) {
-    state = state.copyWith(killSwitchEnabled: enabled);
-  }
+  final Dio _client;
 
-  void setAutoConnect(bool enabled) {
-    state = state.copyWith(autoConnectEnabled: enabled);
-  }
+  Future<List<VpnServerRecord>> fetchServers() async {
+    try {
+      final response = await _client.get<Map<String, dynamic>>(
+        '/v1/vpn/servers',
+      );
+      final items = response.data?['items'] as List<dynamic>? ?? const [];
 
-  void setReconnectOnNetworkChange(bool enabled) {
-    state = state.copyWith(reconnectOnNetworkChange: enabled);
-  }
-
-  void setCustomDns(bool enabled) {
-    state = state.copyWith(customDnsEnabled: enabled);
+      return items
+          .whereType<Map<String, dynamic>>()
+          .map(VpnServerRecord.fromJson)
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw ApiException(
+        error.message ?? 'Unable to load the LabGuard server registry.',
+      );
+    }
   }
 }

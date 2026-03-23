@@ -18,6 +18,18 @@ class VpnOverview {
     final minutes = (sessionDuration.inMinutes % 60).toString().padLeft(2, '0');
     return '$hours:$minutes';
   }
+
+  factory VpnOverview.fromJson(Map<String, dynamic> json) {
+    return VpnOverview(
+      connected: json['connected'] as bool? ?? false,
+      serverName: json['serverName'] as String? ?? 'Unassigned',
+      currentIp: json['currentIp'] as String? ?? 'Unavailable',
+      sessionDuration: Duration(
+        seconds: json['sessionDurationSeconds'] as int? ?? 0,
+      ),
+      dnsMode: json['dnsMode'] as String? ?? 'Default',
+    );
+  }
 }
 
 class VpnPolicySettings {
@@ -47,4 +59,35 @@ class VpnPolicySettings {
       customDnsEnabled: customDnsEnabled ?? this.customDnsEnabled,
     );
   }
+}
+
+class VpnServerRecord {
+  const VpnServerRecord({
+    required this.id,
+    required this.name,
+    required this.regionCode,
+    required this.endpoint,
+    required this.status,
+    required this.isPrimary,
+  });
+
+  factory VpnServerRecord.fromJson(Map<String, dynamic> json) {
+    return VpnServerRecord(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Unassigned',
+      regionCode: json['regionCode'] as String? ?? '',
+      endpoint: json['endpoint'] as String? ?? '',
+      status: json['status'] as String? ?? 'UNKNOWN',
+      isPrimary: json['isPrimary'] as bool? ?? false,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String regionCode;
+  final String endpoint;
+  final String status;
+  final bool isPrimary;
+
+  String get displayLabel => isPrimary ? '$name • $id' : '$name • $regionCode';
 }

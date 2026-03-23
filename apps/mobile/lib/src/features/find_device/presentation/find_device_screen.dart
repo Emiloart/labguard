@@ -5,8 +5,10 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../devices/application/device_registry_provider.dart';
+import '../../devices/domain/device_record.dart';
 
 class FindDeviceScreen extends ConsumerWidget {
   const FindDeviceScreen({super.key, required this.deviceId});
@@ -17,15 +19,32 @@ class FindDeviceScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final device = ref.watch(deviceByIdProvider(deviceId));
 
-    if (device == null) {
-      return Center(
-        child: Text(
-          'Location feed unavailable.',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-      );
-    }
+    return device.when(
+      data: (item) => _FindDeviceContent(device: item),
+      loading: () => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [LoadingPanel(label: 'Loading find-device view')],
+      ),
+      error: (error, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          ErrorPanel(
+            message: error.toString(),
+            onRetry: () => ref.refresh(deviceByIdProvider(deviceId)),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
+class _FindDeviceContent extends StatelessWidget {
+  const _FindDeviceContent({required this.device});
+
+  final DeviceRecord device;
+
+  @override
+  Widget build(BuildContext context) {
     final timestamp = DateFormat(
       'MMM d, yyyy • HH:mm',
     ).format(device.locationCapturedAt);

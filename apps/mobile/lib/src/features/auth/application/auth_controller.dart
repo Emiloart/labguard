@@ -2,6 +2,12 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../dashboard/application/dashboard_controller.dart';
+import '../../devices/application/device_registry_provider.dart';
+import '../../events/application/security_events_provider.dart';
+import '../../settings/application/settings_controller.dart';
+import '../../vpn/application/vpn_preferences_controller.dart';
+import '../data/auth_repository.dart';
 import '../domain/auth_state.dart';
 
 final authControllerProvider =
@@ -21,27 +27,89 @@ class AuthController extends Notifier<AuthSessionState> {
   }
 
   Future<void> _bootstrap() async {
-    await Future<void>.delayed(const Duration(milliseconds: 1100));
-    state = state.copyWith(stage: AuthStage.onboarding);
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final result = await ref.read(authRepositoryProvider).bootstrap();
+    state = state.copyWith(
+      stage: result.stage,
+      session: result.session,
+      clearSession: result.session == null,
+      clearError: true,
+    );
   }
 
-  void completeOnboarding() {
-    state = state.copyWith(stage: AuthStage.signedOut);
+  Future<void> completeOnboarding() async {
+    await ref.read(authRepositoryProvider).completeOnboarding();
+    state = state.copyWith(stage: AuthStage.signedOut, clearError: true);
   }
 
-  void signInPlaceholder() {
-    state = state.copyWith(stage: AuthStage.signedIn);
+  Future<void> signIn({required String identity, String? inviteCode}) async {
+    state = state.copyWith(isBusy: true, clearError: true);
+
+    try {
+      final session = await ref
+          .read(authRepositoryProvider)
+          .login(identity: identity, inviteCode: inviteCode);
+      _invalidateAppData();
+      state = state.copyWith(
+        stage: AuthStage.signedIn,
+        session: session,
+        isBusy: false,
+        clearError: true,
+      );
+    } catch (error) {
+      state = state.copyWith(
+        stage: AuthStage.signedOut,
+        isBusy: false,
+        errorMessage: error.toString(),
+      );
+    }
   }
 
-  void signOut() {
-    state = state.copyWith(stage: AuthStage.signedOut);
+  Future<void> restoreTrustedSession() async {
+    state = state.copyWith(isBusy: true, clearError: true);
+
+    try {
+      final session = await ref
+          .read(authRepositoryProvider)
+          .restoreTrustedSession();
+      _invalidateAppData();
+      state = state.copyWith(
+        stage: AuthStage.signedIn,
+        session: session,
+        isBusy: false,
+        clearError: true,
+      );
+    } catch (error) {
+      state = state.copyWith(
+        stage: AuthStage.signedOut,
+        isBusy: false,
+        errorMessage: error.toString(),
+      );
+    }
   }
 
-  void setBiometric(bool enabled) {
-    state = state.copyWith(biometricEnabled: enabled);
+  Future<void> signOut() async {
+    state = state.copyWith(isBusy: true, clearError: true);
+    await ref.read(authRepositoryProvider).logout();
+    _invalidateAppData();
+    state = state.copyWith(
+      stage: AuthStage.signedOut,
+      clearSession: true,
+      isBusy: false,
+      clearError: true,
+    );
   }
 
-  void setPinLock(bool enabled) {
-    state = state.copyWith(pinLockEnabled: enabled);
+  void clearError() {
+    state = state.copyWith(clearError: true);
+  }
+
+  void _invalidateAppData() {
+    ref.invalidate(dashboardSummaryProvider);
+    ref.invalidate(deviceRegistryProvider);
+    ref.invalidate(securityEventsProvider);
+    ref.invalidate(settingsControllerProvider);
+    ref.invalidate(vpnOverviewProvider);
+    ref.invalidate(vpnServersProvider);
   }
 }

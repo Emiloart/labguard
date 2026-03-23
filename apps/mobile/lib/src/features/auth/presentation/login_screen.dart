@@ -5,11 +5,45 @@ import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
 import '../application/auth_controller.dart';
 
-class LoginScreen extends ConsumerWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  late final TextEditingController _identityController;
+  late final TextEditingController _inviteCodeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _identityController = TextEditingController(text: 'owner@emilolabs.com');
+    _inviteCodeController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _identityController.dispose();
+    _inviteCodeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(authControllerProvider, (previous, next) {
+      if (next.errorMessage != null &&
+          next.errorMessage != previous?.errorMessage) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(next.errorMessage!)));
+        ref.read(authControllerProvider.notifier).clearError();
+      }
+    });
+
+    final authState = ref.watch(authControllerProvider);
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -29,21 +63,23 @@ class LoginScreen extends ConsumerWidget {
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 28),
-              const AppPanel(
+              AppPanel(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Email or handle'),
-                    SizedBox(height: 12),
+                    const Text('Email or handle'),
+                    const SizedBox(height: 12),
                     TextField(
+                      controller: _identityController,
                       decoration: InputDecoration(
                         hintText: 'owner@emilolabs.com',
                       ),
                     ),
-                    SizedBox(height: 18),
-                    Text('Invite code'),
-                    SizedBox(height: 12),
+                    const SizedBox(height: 18),
+                    const Text('Invite code'),
+                    const SizedBox(height: 12),
                     TextField(
+                      controller: _inviteCodeController,
                       decoration: InputDecoration(
                         hintText: 'Optional trusted invite code',
                       ),
@@ -53,16 +89,31 @@ class LoginScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 18),
               FilledButton(
-                onPressed: () {
-                  ref.read(authControllerProvider.notifier).signInPlaceholder();
-                },
-                child: const Text('Approve Device and Continue'),
+                onPressed: authState.isBusy
+                    ? null
+                    : () async {
+                        await ref
+                            .read(authControllerProvider.notifier)
+                            .signIn(
+                              identity: _identityController.text.trim(),
+                              inviteCode: _inviteCodeController.text.trim(),
+                            );
+                      },
+                child: Text(
+                  authState.isBusy
+                      ? 'Approving Device...'
+                      : 'Approve Device and Continue',
+                ),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: () {
-                  ref.read(authControllerProvider.notifier).signInPlaceholder();
-                },
+                onPressed: authState.isBusy
+                    ? null
+                    : () async {
+                        await ref
+                            .read(authControllerProvider.notifier)
+                            .restoreTrustedSession();
+                      },
                 child: const Text('Use Existing Trusted Session'),
               ),
             ],

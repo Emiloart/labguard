@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/device_registry_provider.dart';
 import '../domain/device_record.dart';
@@ -15,6 +16,33 @@ class DevicesScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final devices = ref.watch(deviceRegistryProvider);
+
+    return devices.when(
+      data: (items) => _DevicesContent(devices: items),
+      loading: () => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [LoadingPanel(label: 'Loading device registry')],
+      ),
+      error: (error, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          ErrorPanel(
+            message: error.toString(),
+            onRetry: () => ref.refresh(deviceRegistryProvider),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DevicesContent extends StatelessWidget {
+  const _DevicesContent({required this.devices});
+
+  final List<DeviceRecord> devices;
+
+  @override
+  Widget build(BuildContext context) {
     final dateFormat = DateFormat('MMM d, HH:mm');
 
     return ListView.separated(

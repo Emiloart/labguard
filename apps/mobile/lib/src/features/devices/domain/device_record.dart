@@ -36,4 +36,60 @@ class DeviceRecord {
   final DeviceTrustState trustState;
   final bool isLost;
   final bool isPrimary;
+
+  factory DeviceRecord.fromJson(Map<String, dynamic> json) {
+    return DeviceRecord(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Unknown device',
+      model: json['model'] as String? ?? 'Unknown model',
+      platform: json['platform'] as String? ?? 'Android',
+      appVersion: json['appVersion'] as String? ?? '0.0.0',
+      lastActiveAt:
+          DateTime.tryParse(json['lastActiveAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      vpnStatus: deviceConnectivityStatusFromWire(
+        json['vpnStatus'] as String? ?? 'UNKNOWN',
+      ),
+      batteryLevel: json['batteryLevel'] as int? ?? 0,
+      lastKnownIp: json['lastKnownIp'] as String? ?? 'Unavailable',
+      lastKnownNetwork: json['lastKnownNetwork'] as String? ?? 'Unavailable',
+      lastKnownLocation:
+          json['lastKnownLocation'] as String? ?? 'Location unavailable',
+      locationCapturedAt:
+          DateTime.tryParse(json['locationCapturedAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      trustState: deviceTrustStateFromWire(
+        json['trustState'] as String? ?? 'PENDING_APPROVAL',
+      ),
+      isLost: json['isLost'] as bool? ?? false,
+      isPrimary: json['isPrimary'] as bool? ?? false,
+    );
+  }
+}
+
+DeviceTrustState deviceTrustStateFromWire(String value) {
+  switch (value) {
+    case 'TRUSTED':
+      return DeviceTrustState.trusted;
+    case 'SUSPENDED':
+      return DeviceTrustState.suspended;
+    case 'REVOKED':
+      return DeviceTrustState.revoked;
+    case 'PENDING_APPROVAL':
+    default:
+      return DeviceTrustState.pendingApproval;
+  }
+}
+
+DeviceConnectivityStatus deviceConnectivityStatusFromWire(String value) {
+  switch (value) {
+    case 'CONNECTED':
+      return DeviceConnectivityStatus.connected;
+    case 'DEGRADED':
+      return DeviceConnectivityStatus.degraded;
+    case 'DISCONNECTED':
+    case 'UNKNOWN':
+    default:
+      return DeviceConnectivityStatus.disconnected;
+  }
 }

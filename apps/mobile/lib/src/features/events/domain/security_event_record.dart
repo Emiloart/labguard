@@ -24,4 +24,30 @@ class SecurityEventRecord {
   final DateTime occurredAt;
   final bool unread;
   final String? deviceName;
+
+  factory SecurityEventRecord.fromJson(Map<String, dynamic> json) {
+    return SecurityEventRecord(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Event',
+      summary: json['summary'] as String? ?? 'No summary available.',
+      severity: eventSeverityFromWire(json['severity'] as String? ?? 'INFO'),
+      occurredAt:
+          DateTime.tryParse(json['occurredAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      unread: json['unread'] as bool? ?? false,
+      deviceName: json['deviceName'] as String?,
+    );
+  }
+}
+
+EventSeverity eventSeverityFromWire(String value) {
+  switch (value) {
+    case 'CRITICAL':
+      return EventSeverity.critical;
+    case 'WARNING':
+      return EventSeverity.warning;
+    case 'INFO':
+    default:
+      return EventSeverity.info;
+  }
 }

@@ -46,8 +46,10 @@ class OnboardingScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: () {
-                ref.read(authControllerProvider.notifier).completeOnboarding();
+              onPressed: () async {
+                await ref
+                    .read(authControllerProvider.notifier)
+                    .completeOnboarding();
               },
               child: const Text('Continue to Secure Access'),
             ),

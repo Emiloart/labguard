@@ -1,30 +1,39 @@
+import 'auth_session.dart';
+
 enum AuthStage { booting, onboarding, signedOut, signedIn }
 
 class AuthSessionState {
   const AuthSessionState({
     required this.stage,
-    this.biometricEnabled = false,
-    this.pinLockEnabled = false,
+    this.session,
+    this.isBusy = false,
+    this.errorMessage,
   });
 
   const AuthSessionState.booting()
     : stage = AuthStage.booting,
-      biometricEnabled = false,
-      pinLockEnabled = false;
+      session = null,
+      isBusy = false,
+      errorMessage = null;
 
   final AuthStage stage;
-  final bool biometricEnabled;
-  final bool pinLockEnabled;
+  final AuthSession? session;
+  final bool isBusy;
+  final String? errorMessage;
 
   AuthSessionState copyWith({
     AuthStage? stage,
-    bool? biometricEnabled,
-    bool? pinLockEnabled,
+    AuthSession? session,
+    bool clearSession = false,
+    bool? isBusy,
+    String? errorMessage,
+    bool clearError = false,
   }) {
     return AuthSessionState(
       stage: stage ?? this.stage,
-      biometricEnabled: biometricEnabled ?? this.biometricEnabled,
-      pinLockEnabled: pinLockEnabled ?? this.pinLockEnabled,
+      session: clearSession ? null : session ?? this.session,
+      isBusy: isBusy ?? this.isBusy,
+      errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
 }

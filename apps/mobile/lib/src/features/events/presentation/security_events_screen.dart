@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/security_events_provider.dart';
 import '../domain/security_event_record.dart';
@@ -14,6 +15,33 @@ class SecurityEventsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final events = ref.watch(securityEventsProvider);
+
+    return events.when(
+      data: (items) => _SecurityEventsContent(events: items),
+      loading: () => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [LoadingPanel(label: 'Loading security events')],
+      ),
+      error: (error, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          ErrorPanel(
+            message: error.toString(),
+            onRetry: () => ref.refresh(securityEventsProvider),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityEventsContent extends StatelessWidget {
+  const _SecurityEventsContent({required this.events});
+
+  final List<SecurityEventRecord> events;
+
+  @override
+  Widget build(BuildContext context) {
     final formatter = DateFormat('MMM d, HH:mm');
 
     return ListView.separated(

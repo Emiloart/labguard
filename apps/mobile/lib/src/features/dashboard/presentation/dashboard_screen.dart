@@ -5,30 +5,56 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
-import '../../devices/application/device_registry_provider.dart';
-import '../../events/application/security_events_provider.dart';
-import '../../vpn/application/vpn_preferences_controller.dart';
+import '../application/dashboard_controller.dart';
+import '../domain/dashboard_summary.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final devices = ref.watch(deviceRegistryProvider);
-    final events = ref.watch(securityEventsProvider);
-    final vpnOverview = ref.watch(vpnOverviewProvider);
-    final lostCount = devices.where((device) => device.isLost).length;
-    final unreadCriticalCount = events
-        .where((event) => event.unread && event.severity.isCritical)
-        .length;
+    final summary = ref.watch(dashboardSummaryProvider);
 
+    return summary.when(
+      data: (data) => _DashboardContent(summary: data),
+      loading: () => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [
+          BrandLockup(compact: true, showAttribution: false),
+          SizedBox(height: 20),
+          LoadingPanel(label: 'Loading security dashboard'),
+        ],
+      ),
+      error: (error, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          const BrandLockup(compact: true, showAttribution: false),
+          const SizedBox(height: 20),
+          ErrorPanel(
+            message: error.toString(),
+            onRetry: () => ref.refresh(dashboardSummaryProvider),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardContent extends StatelessWidget {
+  const _DashboardContent({required this.summary});
+
+  final DashboardSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
       children: [
         const BrandLockup(compact: true, showAttribution: false),
         const SizedBox(height: 20),
-        if (unreadCriticalCount > 0) ...[
+        if (summary.criticalAlertsCount > 0) ...[
           AppPanel(
             child: Row(
               children: [
@@ -39,7 +65,7 @@ class DashboardScreen extends ConsumerWidget {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(
-                    '$unreadCriticalCount critical security event${unreadCriticalCount == 1 ? '' : 's'} require review.',
+                    '${summary.criticalAlertsCount} critical security event${summary.criticalAlertsCount == 1 ? '' : 's'} require review.',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 ),
@@ -64,8 +90,10 @@ class DashboardScreen extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   StatusBadge(
-                    label: vpnOverview.connected ? 'Connected' : 'Offline',
-                    color: vpnOverview.connected
+                    label: summary.vpnOverview.connected
+                        ? 'Connected'
+                        : 'Offline',
+                    color: summary.vpnOverview.connected
                         ? LabGuardColors.success
                         : LabGuardColors.warning,
                   ),
@@ -73,12 +101,12 @@ class DashboardScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 18),
               Text(
-                vpnOverview.serverName,
+                summary.vpnOverview.serverName,
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 10),
               Text(
-                'Current IP ${vpnOverview.currentIp} • Session ${vpnOverview.sessionLabel}',
+                'Current IP ${summary.vpnOverview.currentIp} • Session ${summary.vpnOverview.sessionLabel}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 18),
@@ -105,12 +133,15 @@ class DashboardScreen extends ConsumerWidget {
                 children: [
                   _MetricTile(
                     label: 'Trusted devices',
-                    value: '${devices.length}',
+                    value: '${summary.trustedDevicesCount}',
                   ),
-                  _MetricTile(label: 'Lost mode', value: '$lostCount'),
+                  _MetricTile(
+                    label: 'Lost mode',
+                    value: '${summary.lostDevicesCount}',
+                  ),
                   _MetricTile(
                     label: 'Unread alerts',
-                    value: '${events.where((event) => event.unread).length}',
+                    value: '${summary.unreadAlertsCount}',
                   ),
                 ],
               ),
@@ -131,21 +162,12 @@ class DashboardScreen extends ConsumerWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  _QuickAction(
-                    label: 'Devices',
-                    icon: Icons.devices_outlined,
-                    onTap: () => context.go('/devices'),
-                  ),
-                  _QuickAction(
-                    label: 'Events',
-                    icon: Icons.notifications_active_outlined,
-                    onTap: () => context.go('/events'),
-                  ),
-                  _QuickAction(
-                    label: 'Settings',
-                    icon: Icons.tune_outlined,
-                    onTap: () => context.go('/settings'),
-                  ),
+                  for (final action in summary.quickActions)
+                    _QuickAction(
+                      label: action.label,
+                      icon: _iconForAction(action.id),
+                      onTap: () => context.go(action.route),
+                    ),
                 ],
               ),
             ],
@@ -153,6 +175,18 @@ class DashboardScreen extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  IconData _iconForAction(String id) {
+    switch (id) {
+      case 'devices':
+        return Icons.devices_outlined;
+      case 'events':
+        return Icons.notifications_active_outlined;
+      case 'settings':
+      default:
+        return Icons.tune_outlined;
+    }
   }
 }
 

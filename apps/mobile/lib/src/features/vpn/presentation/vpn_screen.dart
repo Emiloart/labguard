@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/platform/android_vpn_bridge.dart';
-import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../settings/application/settings_controller.dart';
 import '../application/vpn_preferences_controller.dart';
 
 class VpnScreen extends ConsumerWidget {
@@ -13,10 +14,39 @@ class VpnScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final overview = ref.watch(vpnOverviewProvider);
-    final policy = ref.watch(vpnPolicyControllerProvider);
-    final policyController = ref.read(vpnPolicyControllerProvider.notifier);
     final servers = ref.watch(vpnServersProvider);
+    final settings = ref.watch(settingsControllerProvider);
     final vpnBridge = ref.watch(androidVpnBridgeProvider);
+
+    if (overview.isLoading || servers.isLoading || settings.isLoading) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: const [LoadingPanel(label: 'Loading VPN controls')],
+      );
+    }
+
+    final firstError = overview.error ?? servers.error ?? settings.error;
+
+    if (firstError != null) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        children: [
+          ErrorPanel(
+            message: firstError.toString(),
+            onRetry: () {
+              ref.invalidate(vpnOverviewProvider);
+              ref.invalidate(vpnServersProvider);
+              ref.invalidate(settingsControllerProvider);
+            },
+          ),
+        ],
+      );
+    }
+
+    final vpnOverview = overview.valueOrNull!;
+    final serverList = servers.valueOrNull!;
+    final preferences = settings.valueOrNull!.preferences;
+    final settingsController = ref.read(settingsControllerProvider.notifier);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
@@ -40,21 +70,21 @@ class VpnScreen extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   StatusBadge(
-                    label: overview.connected ? 'Connected' : 'Disconnected',
-                    color: overview.connected
-                        ? LabGuardColors.success
-                        : LabGuardColors.warning,
+                    label: vpnOverview.connected ? 'Connected' : 'Disconnected',
+                    color: vpnOverview.connected
+                        ? const Color(0xFF74D6A2)
+                        : const Color(0xFFFFB65C),
                   ),
                 ],
               ),
               const SizedBox(height: 18),
               Text(
-                overview.serverName,
+                vpnOverview.serverName,
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 8),
               Text(
-                'Current IP ${overview.currentIp}\nDNS ${overview.dnsMode}\nSession ${overview.sessionLabel}',
+                'Current IP ${vpnOverview.currentIp}\nDNS ${vpnOverview.dnsMode}\nSession ${vpnOverview.sessionLabel}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 18),
@@ -78,12 +108,12 @@ class VpnScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<String>(
-                initialValue: servers.first,
+                initialValue: serverList.isEmpty ? null : serverList.first.id,
                 items: [
-                  for (final server in servers)
+                  for (final server in serverList)
                     DropdownMenuItem<String>(
-                      value: server,
-                      child: Text(server),
+                      value: server.id,
+                      child: Text(server.displayLabel),
                     ),
                 ],
                 onChanged: (_) {},
@@ -96,35 +126,47 @@ class VpnScreen extends ConsumerWidget {
           child: Column(
             children: [
               SwitchListTile.adaptive(
-                value: policy.killSwitchEnabled,
-                onChanged: policyController.setKillSwitch,
+                value: preferences.killSwitchEnabled,
+                onChanged: (value) {
+                  settingsController.updatePreferences(
+                    (current) => current.copyWith(killSwitchEnabled: value),
+                  );
+                },
                 title: const Text('Kill switch'),
                 subtitle: const Text(
                   'Prevent traffic leakage when the tunnel is expected to be active.',
                 ),
               ),
               SwitchListTile.adaptive(
-                value: policy.autoConnectEnabled,
-                onChanged: policyController.setAutoConnect,
+                value: preferences.autoConnectEnabled,
+                onChanged: (value) {
+                  settingsController.updatePreferences(
+                    (current) => current.copyWith(autoConnectEnabled: value),
+                  );
+                },
                 title: const Text('Auto-connect'),
                 subtitle: const Text(
                   'Bring the tunnel up automatically after app start or trusted policy match.',
                 ),
               ),
               SwitchListTile.adaptive(
-                value: policy.reconnectOnNetworkChange,
-                onChanged: policyController.setReconnectOnNetworkChange,
-                title: const Text('Reconnect on network change'),
+                value: preferences.notificationsEnabled,
+                onChanged: (value) {
+                  settingsController.updatePreferences(
+                    (current) => current.copyWith(notificationsEnabled: value),
+                  );
+                },
+                title: const Text('VPN security notifications'),
                 subtitle: const Text(
-                  'Attempt tunnel recovery after Wi-Fi or cellular transitions.',
+                  'Keep device and disconnect alerts visible while the tunnel is active.',
                 ),
               ),
               SwitchListTile.adaptive(
-                value: policy.customDnsEnabled,
-                onChanged: policyController.setCustomDns,
-                title: const Text('Tunnel DNS'),
-                subtitle: const Text(
-                  'Use backend-provisioned DNS resolvers inside the VPN profile.',
+                value: preferences.locationPermissionStatus != 'not_requested',
+                onChanged: (_) {},
+                title: const Text('Location permissions'),
+                subtitle: Text(
+                  'Current policy: ${preferences.locationPermissionStatus}',
                 ),
               ),
             ],
@@ -146,7 +188,7 @@ class VpnScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 14),
                   Text(
-                    'Phase 1 exposes the native bridge only. WireGuard and foreground service work land in Phase 3.\n\n'
+                    'Phase 2 keeps the native bridge and API-backed policy surface aligned. WireGuard and foreground service work land in Phase 3.\n\n'
                     'Bridge response: ${capabilities.isEmpty ? 'pending' : capabilities}',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
