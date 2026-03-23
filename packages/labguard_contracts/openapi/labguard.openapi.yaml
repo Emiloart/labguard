@@ -1,0 +1,20 @@
+openapi: 3.1.0
+info:
+  title: LabGuard API
+  version: 0.1.0
+  description: Private security control-plane API for LabGuard, built by Emilo Labs.
+servers:
+  - url: http://localhost:8080/v1
+paths:
+  /health:
+    get:
+      summary: Basic service health
+      responses:
+        "200":
+          description: Service healthy
+  /devices:
+    get:
+      summary: List account devices
+      responses:
+        "200":
+          description: Device list response placeholder

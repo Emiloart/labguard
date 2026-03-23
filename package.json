@@ -1,0 +1,10 @@
+{
+  "name": "labguard",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "dev:api": "pnpm --dir services/api dev",
+    "build:api": "pnpm --dir services/api build",
+    "typecheck:api": "pnpm --dir services/api typecheck"
+  }
+}

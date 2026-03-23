@@ -1,0 +1,389 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  MEMBER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum DeviceTrustState {
+  TRUSTED
+  PENDING_APPROVAL
+  SUSPENDED
+  REVOKED
+}
+
+enum DeviceOperationalStatus {
+  ACTIVE
+  DISABLED
+  LOST
+  RECOVERING
+  RETIRED
+}
+
+enum DeviceConnectivityStatus {
+  CONNECTED
+  DISCONNECTED
+  DEGRADED
+  UNKNOWN
+}
+
+enum LostModeStatus {
+  OFF
+  ACTIVE
+  RECOVERED
+}
+
+enum VpnServerStatus {
+  ACTIVE
+  MAINTENANCE
+  DISABLED
+}
+
+enum VpnProfileStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+}
+
+enum RemoteCommandType {
+  SIGN_OUT
+  REVOKE_VPN
+  ROTATE_SESSION
+  WIPE_APP_DATA
+  RING_ALARM
+  SHOW_RECOVERY_MESSAGE
+  MARK_RECOVERED
+  DISABLE_DEVICE
+}
+
+enum RemoteCommandStatus {
+  QUEUED
+  DELIVERED
+  ACKNOWLEDGED
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+enum RemoteCommandResultStatus {
+  ACKNOWLEDGED
+  SUCCEEDED
+  FAILED
+}
+
+enum SecurityEventSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum SecurityEventType {
+  VPN_DISCONNECTED
+  DEVICE_REGISTERED
+  DEVICE_REVOKED
+  DEVICE_MARKED_LOST
+  COMMAND_EXECUTED
+  SUSPICIOUS_LOGIN
+  KEY_ROTATED
+  SESSION_EXPIRED
+  DEVICE_LOCATION_UPDATED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+}
+
+model Account {
+  id             String          @id @default(uuid()) @db.Uuid
+  name           String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  users          User[]
+  invitations    Invitation[]
+  devices        Device[]
+  vpnServers     VpnServer[]
+  securityEvents SecurityEvent[]
+  auditLogs      AuditLog[]
+}
+
+model User {
+  id              String          @id @default(uuid()) @db.Uuid
+  accountId       String          @db.Uuid
+  email           String          @unique
+  displayName     String
+  role            UserRole        @default(MEMBER)
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  account         Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sessions        Session[]
+  devices         Device[]
+  sentInvitations Invitation[]    @relation("InvitationSender")
+  remoteCommands  RemoteCommand[] @relation("RemoteCommandInitiator")
+  securityEvents  SecurityEvent[]
+  preferences     UserPreference?
+  auditLogs       AuditLog[]      @relation("AuditLogActor")
+
+  @@index([accountId, role])
+}
+
+model Invitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  accountId       String           @db.Uuid
+  invitedByUserId String?          @db.Uuid
+  email           String?
+  codeHash        String
+  status          InvitationStatus @default(PENDING)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  account         Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  invitedBy       User?            @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, status])
+}
+
+model Session {
+  id               String        @id @default(uuid()) @db.Uuid
+  userId           String        @db.Uuid
+  refreshTokenHash String
+  status           SessionStatus @default(ACTIVE)
+  ipAddress        String?
+  userAgent        String?
+  lastUsedAt       DateTime      @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model Device {
+  id                        String                   @id @default(uuid()) @db.Uuid
+  accountId                 String                   @db.Uuid
+  userId                    String?                  @db.Uuid
+  name                      String
+  model                     String
+  platform                  String
+  osVersion                 String?
+  appVersion                String
+  approvalTokenHash         String?
+  trustState                DeviceTrustState         @default(PENDING_APPROVAL)
+  operationalStatus         DeviceOperationalStatus  @default(ACTIVE)
+  lostModeStatus            LostModeStatus           @default(OFF)
+  connectivityStatus        DeviceConnectivityStatus @default(UNKNOWN)
+  isPrimary                 Boolean                  @default(false)
+  batteryLevel              Int?
+  lastSeenAt                DateTime?
+  lastKnownIp               String?
+  lastKnownNetwork          String?
+  lastKnownLocation         String?
+  locationPermissionGranted Boolean                  @default(false)
+  telemetryElevated         Boolean                  @default(false)
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  account                   Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user                      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sessions                  DeviceSession[]
+  vpnProfiles               VpnProfile[]
+  locations                 DeviceLocation[]
+  remoteCommands            RemoteCommand[]
+  securityEvents            SecurityEvent[]
+  auditLogs                 AuditLog[]
+
+  @@index([accountId, trustState])
+  @@index([userId])
+}
+
+model DeviceSession {
+  id              String                   @id @default(uuid()) @db.Uuid
+  deviceId        String                   @db.Uuid
+  status          DeviceConnectivityStatus @default(UNKNOWN)
+  publicIp        String?
+  lastHeartbeatAt DateTime?
+  connectedAt     DateTime?
+  disconnectedAt  DateTime?
+  bytesIn         BigInt?
+  bytesOut        BigInt?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  device          Device                   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status])
+}
+
+model VpnServer {
+  id         String          @id @default(uuid()) @db.Uuid
+  accountId  String          @db.Uuid
+  name       String
+  regionCode String
+  hostname   String
+  endpoint   String
+  port       Int             @default(51820)
+  publicKey  String
+  status     VpnServerStatus @default(ACTIVE)
+  priority   Int             @default(100)
+  isPrimary  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  account    Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  profiles   VpnProfile[]
+
+  @@unique([accountId, name])
+}
+
+model VpnProfile {
+  id                   String           @id @default(uuid()) @db.Uuid
+  deviceId             String           @db.Uuid
+  vpnServerId          String           @db.Uuid
+  publicKey            String
+  privateKeyEncrypted  String
+  presharedKeyEncrypted String?
+  assignedAddress      String
+  dnsServers           String[]
+  status               VpnProfileStatus @default(ACTIVE)
+  issuedAt             DateTime         @default(now())
+  rotatedAt            DateTime?
+  revokedAt            DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  device               Device           @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  vpnServer            VpnServer        @relation(fields: [vpnServerId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status])
+}
+
+model DeviceLocation {
+  id               String   @id @default(uuid()) @db.Uuid
+  deviceId         String   @db.Uuid
+  latitude         Decimal  @db.Decimal(9, 6)
+  longitude        Decimal  @db.Decimal(9, 6)
+  accuracyMeters   Int?
+  capturedAt       DateTime
+  networkType      String?
+  ipAddress        String?
+  source           String
+  lostModeSnapshot Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  device           Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, capturedAt])
+}
+
+model RemoteCommand {
+  id                String               @id @default(uuid()) @db.Uuid
+  deviceId          String               @db.Uuid
+  initiatedByUserId String?              @db.Uuid
+  type              RemoteCommandType
+  status            RemoteCommandStatus  @default(QUEUED)
+  payload           Json?
+  requestedAt       DateTime             @default(now())
+  expiresAt         DateTime?
+  deliveredAt       DateTime?
+  acknowledgedAt    DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  device            Device               @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  initiatedBy       User?                @relation("RemoteCommandInitiator", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+  results           RemoteCommandResult[]
+
+  @@index([deviceId, status])
+}
+
+model RemoteCommandResult {
+  id              String                    @id @default(uuid()) @db.Uuid
+  remoteCommandId String                    @db.Uuid
+  status          RemoteCommandResultStatus
+  errorCode       String?
+  errorMessage    String?
+  metadata        Json?
+  executedAt      DateTime                  @default(now())
+  createdAt       DateTime                  @default(now())
+  remoteCommand   RemoteCommand             @relation(fields: [remoteCommandId], references: [id], onDelete: Cascade)
+
+  @@index([remoteCommandId, executedAt])
+}
+
+model SecurityEvent {
+  id         String                @id @default(uuid()) @db.Uuid
+  accountId  String                @db.Uuid
+  userId     String?               @db.Uuid
+  deviceId   String?               @db.Uuid
+  type       SecurityEventType
+  severity   SecurityEventSeverity
+  title      String
+  summary    String
+  details    Json?
+  unread     Boolean               @default(true)
+  occurredAt DateTime              @default(now())
+  readAt     DateTime?
+  createdAt  DateTime              @default(now())
+  account    Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user       User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  device     Device?               @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, occurredAt])
+  @@index([deviceId, occurredAt])
+}
+
+model AuditLog {
+  id          String       @id @default(uuid()) @db.Uuid
+  accountId   String       @db.Uuid
+  actorUserId String?      @db.Uuid
+  deviceId    String?      @db.Uuid
+  action      String
+  targetType  String
+  targetId    String?
+  outcome     AuditOutcome
+  requestId   String?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  actorUser   User?        @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  device      Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, createdAt])
+}
+
+model UserPreference {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @db.Uuid
+  biometricEnabled     Boolean  @default(false)
+  pinLockEnabled       Boolean  @default(false)
+  autoConnectEnabled   Boolean  @default(true)
+  killSwitchEnabled    Boolean  @default(true)
+  telemetryLevel       String   @default("minimal")
+  notificationSettings Json?
+  trustedWifiPolicies  Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
