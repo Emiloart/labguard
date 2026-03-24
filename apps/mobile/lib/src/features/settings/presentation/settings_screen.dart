@@ -3,23 +3,93 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/config/app_environment.dart';
+import '../../../core/platform/android_system_security_bridge.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../auth/application/auth_controller.dart';
+import '../application/device_security_posture_provider.dart';
 import '../application/settings_controller.dart';
 import '../domain/settings_bundle.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(deviceSecurityPostureControllerProvider).refresh();
+    }
+  }
+
+  Future<void> _openNotificationSettings() {
+    return ref
+        .read(deviceSecurityPostureControllerProvider)
+        .openNotificationSettings();
+  }
+
+  Future<void> _openApplicationSettings() {
+    return ref
+        .read(deviceSecurityPostureControllerProvider)
+        .openApplicationSettings();
+  }
+
+  Future<void> _reviewBatteryOptimization(
+    SecurityPreferences preferences,
+  ) async {
+    if (!preferences.batteryOptimizationAcknowledged) {
+      await ref
+          .read(settingsControllerProvider.notifier)
+          .updatePreferences(
+            (current) =>
+                current.copyWith(batteryOptimizationAcknowledged: true),
+          );
+    }
+
+    await ref
+        .read(deviceSecurityPostureControllerProvider)
+        .openBatteryOptimizationSettings();
+  }
+
+  void _refreshPosture() {
+    ref.read(deviceSecurityPostureControllerProvider).refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final authController = ref.read(authControllerProvider.notifier);
     final settings = ref.watch(settingsControllerProvider);
+    final posture = ref.watch(deviceSecurityPostureProvider);
 
     return settings.when(
-      data: (data) =>
-          _SettingsContent(settings: data, onSignOut: authController.signOut),
+      data: (data) => _SettingsContent(
+        settings: data,
+        posture: posture,
+        onSignOut: authController.signOut,
+        onRefreshPosture: _refreshPosture,
+        onOpenNotificationSettings: _openNotificationSettings,
+        onOpenApplicationSettings: _openApplicationSettings,
+        onReviewBatteryOptimization: () =>
+            _reviewBatteryOptimization(data.preferences),
+      ),
       loading: () => ListView(
         padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
         children: const [LoadingPanel(label: 'Loading security settings')],
@@ -38,10 +108,23 @@ class SettingsScreen extends ConsumerWidget {
 }
 
 class _SettingsContent extends ConsumerWidget {
-  const _SettingsContent({required this.settings, required this.onSignOut});
+  const _SettingsContent({
+    required this.settings,
+    required this.posture,
+    required this.onSignOut,
+    required this.onRefreshPosture,
+    required this.onOpenNotificationSettings,
+    required this.onOpenApplicationSettings,
+    required this.onReviewBatteryOptimization,
+  });
 
   final SettingsBundle settings;
+  final AsyncValue<DeviceSecurityPosture> posture;
   final Future<void> Function() onSignOut;
+  final VoidCallback onRefreshPosture;
+  final Future<void> Function() onOpenNotificationSettings;
+  final Future<void> Function() onOpenApplicationSettings;
+  final Future<void> Function() onReviewBatteryOptimization;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -104,6 +187,15 @@ class _SettingsContent extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 16),
+        _DeviceSecurityPosturePanel(
+          posture: posture,
+          preferences: preferences,
+          onRefresh: onRefreshPosture,
+          onOpenNotificationSettings: onOpenNotificationSettings,
+          onOpenApplicationSettings: onOpenApplicationSettings,
+          onReviewBatteryOptimization: onReviewBatteryOptimization,
+        ),
+        const SizedBox(height: 16),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,7 +206,7 @@ class _SettingsContent extends ConsumerWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                'Mode ${AppEnvironment.environment}\nAPI ${AppEnvironment.apiBaseUrl}\nVersion ${AppEnvironment.appVersion}\nTelemetry ${preferences.telemetryLevel}\nLocation ${preferences.locationPermissionStatus}',
+                'Mode ${AppEnvironment.environment}\nAPI ${AppEnvironment.apiBaseUrl}\nVersion ${AppEnvironment.appVersion}\nBrand ${settings.profile.brandAttribution}\nTelemetry ${preferences.telemetryLevel}\nLost-mode location policy ${preferences.locationPermissionStatus}\nBattery review ${preferences.batteryOptimizationAcknowledged ? 'acknowledged' : 'pending'}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 18),
@@ -137,6 +229,259 @@ class _SettingsContent extends ConsumerWidget {
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _DeviceSecurityPosturePanel extends StatelessWidget {
+  const _DeviceSecurityPosturePanel({
+    required this.posture,
+    required this.preferences,
+    required this.onRefresh,
+    required this.onOpenNotificationSettings,
+    required this.onOpenApplicationSettings,
+    required this.onReviewBatteryOptimization,
+  });
+
+  final AsyncValue<DeviceSecurityPosture> posture;
+  final SecurityPreferences preferences;
+  final VoidCallback onRefresh;
+  final Future<void> Function() onOpenNotificationSettings;
+  final Future<void> Function() onOpenApplicationSettings;
+  final Future<void> Function() onReviewBatteryOptimization;
+
+  @override
+  Widget build(BuildContext context) {
+    return posture.when(
+      data: (data) => _buildContent(context, data),
+      loading: () =>
+          const LoadingPanel(label: 'Inspecting Android runtime posture'),
+      error: (error, _) => AppPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Device Runtime Posture',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error.toString(),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonal(
+              onPressed: onRefresh,
+              child: const Text('Retry posture check'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, DeviceSecurityPosture posture) {
+    if (!posture.supported) {
+      return AppPanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Device Runtime Posture',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Native Android posture checks are unavailable on this build.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(onPressed: onRefresh, child: const Text('Refresh')),
+          ],
+        ),
+      );
+    }
+
+    final notificationsRequireReview = !posture.notificationsEnabled;
+    final locationRequiresReview =
+        posture.locationPermissionStatus != 'granted_precise';
+    final batteryRequiresReview = !posture.batteryOptimizationIgnored;
+    final requiresReview =
+        notificationsRequireReview ||
+        locationRequiresReview ||
+        batteryRequiresReview;
+
+    return AppPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Device Runtime Posture',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            requiresReview
+                ? 'Android runtime controls need operator review before this device is trusted for continuous protection.'
+                : 'Android runtime controls meet the current LabGuard protection baseline.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 18),
+          _PostureStatusRow(
+            label: 'Security notifications',
+            value: posture.notificationsEnabled ? 'Enabled' : 'Disabled',
+            detail: posture.notificationsEnabled
+                ? 'Critical revocations and disconnect alerts can surface immediately.'
+                : 'Security alerts can be missed until the app is opened again.',
+            tone: posture.notificationsEnabled
+                ? _PostureStatusTone.healthy
+                : _PostureStatusTone.critical,
+          ),
+          const SizedBox(height: 12),
+          _PostureStatusRow(
+            label: 'Location access',
+            value: _locationLabel(posture.locationPermissionStatus),
+            detail: posture.locationPermissionStatus == 'granted_precise'
+                ? 'Lost-device recovery can capture precise location samples.'
+                : posture.locationPermissionStatus == 'granted_approximate'
+                ? 'Recovery remains available, but approximate-only access reduces map accuracy.'
+                : 'Lost-device recovery cannot refresh location until Android permission is restored.',
+            tone: _locationTone(posture.locationPermissionStatus),
+          ),
+          const SizedBox(height: 12),
+          _PostureStatusRow(
+            label: 'Battery optimization',
+            value: posture.batteryOptimizationIgnored ? 'Exempt' : 'Restricted',
+            detail: posture.batteryOptimizationIgnored
+                ? 'Background sync and command delivery are less likely to be throttled.'
+                : preferences.batteryOptimizationAcknowledged
+                ? 'Background delivery can still be delayed by Android power management.'
+                : 'Review is still pending for Android power-management restrictions.',
+            tone: posture.batteryOptimizationIgnored
+                ? _PostureStatusTone.healthy
+                : _PostureStatusTone.review,
+          ),
+          const SizedBox(height: 12),
+          _PostureStatusRow(
+            label: 'Platform build',
+            value: 'Android API ${posture.sdkInt}',
+            detail: posture.postNotificationsRuntimePermissionRequired
+                ? 'Runtime notification permission is enforced on this Android release.'
+                : 'Notification delivery is governed by the app-level system toggle.',
+            tone: _PostureStatusTone.healthy,
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              if (notificationsRequireReview)
+                FilledButton.tonal(
+                  onPressed: onOpenNotificationSettings,
+                  child: const Text('Notification Settings'),
+                ),
+              if (locationRequiresReview)
+                FilledButton.tonal(
+                  onPressed: onOpenApplicationSettings,
+                  child: const Text('App Permissions'),
+                ),
+              if (batteryRequiresReview)
+                FilledButton.tonal(
+                  onPressed: onReviewBatteryOptimization,
+                  child: const Text('Battery Optimization'),
+                ),
+              OutlinedButton(
+                onPressed: onRefresh,
+                child: const Text('Refresh'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _locationLabel(String status) {
+    switch (status) {
+      case 'granted_precise':
+        return 'Precise';
+      case 'granted_approximate':
+        return 'Approximate';
+      case 'denied':
+        return 'Denied';
+      default:
+        return 'Unavailable';
+    }
+  }
+
+  static _PostureStatusTone _locationTone(String status) {
+    switch (status) {
+      case 'granted_precise':
+        return _PostureStatusTone.healthy;
+      case 'granted_approximate':
+        return _PostureStatusTone.review;
+      case 'denied':
+        return _PostureStatusTone.critical;
+      default:
+        return _PostureStatusTone.review;
+    }
+  }
+}
+
+enum _PostureStatusTone { healthy, review, critical }
+
+class _PostureStatusRow extends StatelessWidget {
+  const _PostureStatusRow({
+    required this.label,
+    required this.value,
+    required this.detail,
+    required this.tone,
+  });
+
+  final String label;
+  final String value;
+  final String detail;
+  final _PostureStatusTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (tone) {
+      _PostureStatusTone.healthy => LabGuardColors.success,
+      _PostureStatusTone.review => LabGuardColors.warning,
+      _PostureStatusTone.critical => LabGuardColors.danger,
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: color.withValues(alpha: 0.45)),
+              ),
+              child: Text(
+                value,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(detail, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
