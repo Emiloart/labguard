@@ -1,7 +1,9 @@
 package com.emilolabs.labguard.vpn
 
 import android.app.Activity
+import android.content.Intent
 import android.net.VpnService
+import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.plugin.common.BinaryMessenger
@@ -115,6 +117,11 @@ private class LabGuardVpnMethodCallHandler(
 
             "clearProfile" -> runAsync(result) {
                 manager.clearProfile(activity)
+            }
+
+            "openVpnSettings" -> {
+                activity.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                result.success(null)
             }
 
             else -> result.notImplemented()

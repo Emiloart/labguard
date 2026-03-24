@@ -61,6 +61,7 @@ private class LabGuardRuntimeMethodCallHandler(
             "syncRuntimePreferences" -> {
                 val notificationsEnabled = call.argument<Boolean>("notificationsEnabled") ?: true
                 val autoConnectEnabled = call.argument<Boolean>("autoConnectEnabled") ?: true
+                val killSwitchEnabled = call.argument<Boolean>("killSwitchEnabled") ?: true
                 val existingPreferences =
                     secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
 
@@ -68,6 +69,20 @@ private class LabGuardRuntimeMethodCallHandler(
                     existingPreferences.copy(
                         notificationsEnabled = notificationsEnabled,
                         autoConnectEnabled = autoConnectEnabled,
+                        killSwitchEnabled = killSwitchEnabled,
+                    ),
+                )
+                result.success(null)
+            }
+
+            "setVpnConnectionIntent" -> {
+                val desiredConnected = call.argument<Boolean>("desiredConnected") ?: false
+                val existingPreferences =
+                    secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
+
+                secureStateStore.writeRuntimePreferences(
+                    existingPreferences.copy(
+                        desiredConnected = desiredConnected,
                     ),
                 )
                 result.success(null)
@@ -81,6 +96,8 @@ private class LabGuardRuntimeMethodCallHandler(
         return LabGuardSecureStateStore.StoredRuntimePreferences(
             notificationsEnabled = true,
             autoConnectEnabled = true,
+            killSwitchEnabled = true,
+            desiredConnected = false,
             apiBaseUrl = "",
         )
     }

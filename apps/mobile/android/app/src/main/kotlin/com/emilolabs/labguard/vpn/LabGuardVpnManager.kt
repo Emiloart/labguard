@@ -36,14 +36,19 @@ class LabGuardVpnManager private constructor(
             "platform" to "android",
             "vpnServicePrepared" to permissionGranted,
             "wireGuardBackendIntegrated" to true,
+            "supportsAlwaysOnSystemSettings" to true,
+            "killSwitchManagedBySystem" to true,
             "permissionGranted" to permissionGranted,
             "packageName" to applicationContext.packageName,
-            "notes" to "LabGuard uses the official WireGuard Android tunnel backend for the Phase 3 VPN core.",
+            "notes" to
+                "LabGuard uses the official WireGuard Android tunnel backend. Kill switch enforcement must use Android Always-on VPN and block-without-VPN system settings.",
         )
     }
 
     fun getStatus(permissionContext: Context): Map<String, Any?> {
         restoreInstalledProfileIfNeeded()
+        val runtimePreferences =
+            secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
         val profile = installedProfile
         val permissionGranted = VpnService.prepare(permissionContext) == null
         val tunnelState = when {
@@ -71,6 +76,8 @@ class LabGuardVpnManager private constructor(
             "tunnelName" to (profile?.tunnelName ?: "labguard"),
             "serverId" to (profile?.serverId ?: ""),
             "profileRevision" to (profile?.revision ?: 0),
+            "desiredConnected" to runtimePreferences.desiredConnected,
+            "killSwitchRequested" to runtimePreferences.killSwitchEnabled,
             "currentIp" to if (tunnelState == "CONNECTED") profile?.interfaceAddress ?: "Unavailable" else "Unavailable",
             "bytesReceived" to (statistics?.totalRx() ?: 0L),
             "bytesSent" to (statistics?.totalTx() ?: 0L),
@@ -306,6 +313,16 @@ class LabGuardVpnManager private constructor(
     }
 
     private fun toIsoString(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).toString()
+
+    private fun defaultRuntimePreferences(): LabGuardSecureStateStore.StoredRuntimePreferences {
+        return LabGuardSecureStateStore.StoredRuntimePreferences(
+            notificationsEnabled = true,
+            autoConnectEnabled = true,
+            killSwitchEnabled = true,
+            desiredConnected = false,
+            apiBaseUrl = "",
+        )
+    }
 
     private data class InstalledProfile(
         val deviceId: String,

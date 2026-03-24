@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
 import '../../../core/security/secure_store.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../dashboard/application/dashboard_controller.dart';
 import '../../devices/application/device_registry_provider.dart';
+import '../../settings/application/settings_controller.dart';
 import '../domain/vpn_overview.dart';
 import 'vpn_preferences_controller.dart';
 
@@ -18,29 +20,38 @@ final vpnSessionControllerProvider =
 
 class VpnSessionController extends AsyncNotifier<VpnControlState> {
   Timer? _poller;
+  bool _autoConnectInFlight = false;
 
   @override
   Future<VpnControlState> build() async {
     ref.watch(
       authControllerProvider.select((state) => state.session?.device.id),
     );
+    ref.watch(
+      settingsControllerProvider.select(
+        (value) => value.valueOrNull?.preferences.autoConnectEnabled,
+      ),
+    );
     ref.onDispose(_stopPolling);
-    final controlState = await _loadState(reconcileNativeProfile: true);
+    var controlState = await _loadState(reconcileNativeProfile: true);
+    controlState = await _autoConnectIfRequired(controlState);
     _configurePolling(controlState);
     return controlState;
   }
 
   Future<void> refresh() async {
-    state = await AsyncValue.guard(
-      () => _loadState(reconcileNativeProfile: true),
-    );
+    state = await AsyncValue.guard(() async {
+      final controlState = await _loadState(reconcileNativeProfile: true);
+      return _autoConnectIfRequired(controlState);
+    });
     _configurePolling(state.valueOrNull);
   }
 
   Future<void> prepareAndroidVpn() async {
     await AsyncValue.guard(() async {
       await ref.read(androidVpnBridgeProvider).prepareVpn();
-      return _loadState(reconcileNativeProfile: false);
+      final controlState = await _loadState(reconcileNativeProfile: false);
+      return _autoConnectIfRequired(controlState);
     }).then((value) {
       state = value;
       _configurePolling(state.valueOrNull);
@@ -61,6 +72,13 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
         profileOverride: profile,
       );
     });
+    state = await AsyncValue.guard(() async {
+      final current = state.valueOrNull;
+      if (current == null) {
+        return _loadState(reconcileNativeProfile: true);
+      }
+      return _autoConnectIfRequired(current);
+    });
     _configurePolling(state.valueOrNull);
     _invalidateCrossFeatureState();
   }
@@ -72,6 +90,9 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       final bridge = ref.read(androidVpnBridgeProvider);
 
       await _ensureInstalledProfile(deviceId);
+      await ref
+          .read(androidBackgroundRuntimeBridgeProvider)
+          .setVpnConnectionIntent(desiredConnected: true);
       final capabilities = await bridge.prepareVpn();
 
       if (!capabilities.permissionGranted) {
@@ -100,6 +121,9 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
+      await ref
+          .read(androidBackgroundRuntimeBridgeProvider)
+          .setVpnConnectionIntent(desiredConnected: false);
       final nativeStatus = await ref
           .read(androidVpnBridgeProvider)
           .disconnect();
@@ -139,6 +163,13 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
         profileOverride: profile,
       );
     });
+    state = await AsyncValue.guard(() async {
+      final current = state.valueOrNull;
+      if (current == null) {
+        return _loadState(reconcileNativeProfile: true);
+      }
+      return _autoConnectIfRequired(current);
+    });
     _configurePolling(state.valueOrNull);
     _invalidateCrossFeatureState();
   }
@@ -147,6 +178,9 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
+      await ref
+          .read(androidBackgroundRuntimeBridgeProvider)
+          .setVpnConnectionIntent(desiredConnected: false);
       final profile = await ref
           .read(vpnRepositoryProvider)
           .revokeProfile(deviceId);
@@ -183,13 +217,62 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
           .read(vpnRepositoryProvider)
           .recordHeartbeat(deviceId: deviceId, status: nativeStatus);
 
-      return _loadState(
+      final controlState = await _loadState(
         reconcileNativeProfile: false,
         nativeStatusOverride: nativeStatus,
       );
+      return _autoConnectIfRequired(controlState);
     });
     _configurePolling(state.valueOrNull);
     _invalidateCrossFeatureState();
+  }
+
+  Future<VpnControlState> _autoConnectIfRequired(
+    VpnControlState controlState,
+  ) async {
+    if (_autoConnectInFlight) {
+      return controlState;
+    }
+
+    final settings = await ref.read(settingsControllerProvider.future);
+    final shouldConnect = shouldAttemptAutoConnect(
+      status: controlState.nativeStatus,
+      autoConnectEnabled: settings.preferences.autoConnectEnabled,
+    );
+
+    if (!shouldConnect) {
+      return controlState;
+    }
+
+    _autoConnectInFlight = true;
+
+    try {
+      final deviceId = _currentDeviceId();
+      final nativeStatus = await ref.read(androidVpnBridgeProvider).connect();
+      await ref
+          .read(vpnRepositoryProvider)
+          .connectSession(
+            deviceId: deviceId,
+            serverId: nativeStatus.serverId,
+            currentIp: nativeStatus.currentIp,
+          );
+      await ref
+          .read(vpnRepositoryProvider)
+          .recordHeartbeat(deviceId: deviceId, status: nativeStatus);
+
+      return _loadState(
+        reconcileNativeProfile: false,
+        nativeStatusOverride: nativeStatus,
+        profileOverride: controlState.profile,
+      );
+    } catch (_) {
+      return _loadState(
+        reconcileNativeProfile: false,
+        profileOverride: controlState.profile,
+      );
+    } finally {
+      _autoConnectInFlight = false;
+    }
   }
 
   Future<VpnControlState> _loadState({

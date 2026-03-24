@@ -40,11 +40,23 @@ class AndroidBackgroundRuntimeBridge {
   Future<void> syncRuntimePreferences({
     required bool notificationsEnabled,
     required bool autoConnectEnabled,
+    required bool killSwitchEnabled,
   }) async {
     try {
       await _channel.invokeMethod<void>('syncRuntimePreferences', {
         'notificationsEnabled': notificationsEnabled,
         'autoConnectEnabled': autoConnectEnabled,
+        'killSwitchEnabled': killSwitchEnabled,
+      });
+    } on MissingPluginException {
+      // Android-specific bridge unavailable in tests or future non-Android builds.
+    }
+  }
+
+  Future<void> setVpnConnectionIntent({required bool desiredConnected}) async {
+    try {
+      await _channel.invokeMethod<void>('setVpnConnectionIntent', {
+        'desiredConnected': desiredConnected,
       });
     } on MissingPluginException {
       // Android-specific bridge unavailable in tests or future non-Android builds.

@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
 import '../../../core/security/secure_store.dart';
 import '../../auth/application/auth_controller.dart';
@@ -189,6 +190,10 @@ class RemoteCommandRuntime {
   }
 
   Future<void> _disconnectAndClearProfile(String deviceId) async {
+    await _ref
+        .read(androidBackgroundRuntimeBridgeProvider)
+        .setVpnConnectionIntent(desiredConnected: false);
+
     try {
       await _ref.read(androidVpnBridgeProvider).disconnect();
     } catch (_) {

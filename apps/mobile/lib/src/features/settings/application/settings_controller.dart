@@ -55,6 +55,7 @@ class SettingsController extends AsyncNotifier<SettingsBundle> {
         .syncRuntimePreferences(
           notificationsEnabled: preferences.notificationsEnabled,
           autoConnectEnabled: preferences.autoConnectEnabled,
+          killSwitchEnabled: preferences.killSwitchEnabled,
         );
   }
 }

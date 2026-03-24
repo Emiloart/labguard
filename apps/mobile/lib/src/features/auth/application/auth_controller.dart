@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
 import '../../dashboard/application/dashboard_controller.dart';
 import '../../devices/application/device_registry_provider.dart';
@@ -157,6 +158,10 @@ class AuthController extends Notifier<AuthSessionState> {
   }
 
   Future<void> _clearLocalProtectedMaterial() async {
+    await ref
+        .read(androidBackgroundRuntimeBridgeProvider)
+        .setVpnConnectionIntent(desiredConnected: false);
+
     try {
       await ref.read(androidVpnBridgeProvider).clearProfile();
     } on MissingPluginException {

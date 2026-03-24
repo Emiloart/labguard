@@ -75,4 +75,12 @@ class AndroidVpnBridge {
 
     return VpnNativeStatus.fromJson(values ?? const {});
   }
+
+  Future<void> openVpnSettings() async {
+    try {
+      await _channel.invokeMethod<void>('openVpnSettings');
+    } on MissingPluginException {
+      // Android VPN settings handoff is unavailable in tests and future non-Android builds.
+    }
+  }
 }

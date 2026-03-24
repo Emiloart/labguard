@@ -35,6 +35,7 @@ class LabGuardCommandSyncWorker(
         runtimeSession = secureStateStore.readSession() ?: return Result.success()
 
         return try {
+            ensureDesiredVpnConnection()
             val commands = fetchCommands(apiBaseUrl)
 
             for (command in commands) {
@@ -111,6 +112,7 @@ class LabGuardCommandSyncWorker(
                 secureStateStore.clearRecoverySignal()
                 notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
+                clearConnectionIntent()
                 notifier.showSecurityAlert(
                     title = "LabGuard signed out",
                     message = "Trusted access was revoked on ${session.deviceName}.",
@@ -129,6 +131,7 @@ class LabGuardCommandSyncWorker(
 
             "REVOKE_VPN" -> {
                 vpnManager.clearProfile(applicationContext)
+                clearConnectionIntent()
                 notifier.showSecurityAlert(
                     title = "LabGuard VPN revoked",
                     message =
@@ -145,6 +148,7 @@ class LabGuardCommandSyncWorker(
                 secureStateStore.clearRecoverySignal()
                 notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
+                clearConnectionIntent()
                 notifier.showSecurityAlert(
                     title = "LabGuard session rotated",
                     message = "This device must authenticate again before access resumes.",
@@ -163,6 +167,7 @@ class LabGuardCommandSyncWorker(
 
             "WIPE_APP_DATA" -> {
                 vpnManager.clearProfile(applicationContext)
+                clearConnectionIntent()
                 notifier.showSecurityAlert(
                     title = "LabGuard local data wiped",
                     message = "App-sensitive LabGuard data was cleared from this device.",
@@ -230,6 +235,7 @@ class LabGuardCommandSyncWorker(
                 secureStateStore.clearRecoverySignal()
                 notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
+                clearConnectionIntent()
                 notifier.showSecurityAlert(
                     title = "LabGuard access disabled",
                     message = "Device access was disabled and reapproval is now required.",
@@ -312,6 +318,27 @@ class LabGuardCommandSyncWorker(
             url = "$apiBaseUrl/v1/vpn/sessions/heartbeat",
             body = body.toString(),
         )
+    }
+
+    private fun ensureDesiredVpnConnection() {
+        val runtimePreferences = secureStateStore.readRuntimePreferences() ?: return
+
+        if (!runtimePreferences.autoConnectEnabled || !runtimePreferences.desiredConnected) {
+            return
+        }
+
+        val status = vpnManager.getStatus(applicationContext)
+        val permissionGranted = status["permissionGranted"] as? Boolean ?: false
+        val profileInstalled = status["profileInstalled"] as? Boolean ?: false
+        val tunnelState = status["tunnelState"] as? String ?: "PROFILE_MISSING"
+
+        if (!permissionGranted || !profileInstalled || tunnelState == "CONNECTED") {
+            return
+        }
+
+        runCatching {
+            vpnManager.connect(applicationContext)
+        }
     }
 
     private fun reportCommandStatus(
@@ -487,6 +514,7 @@ class LabGuardCommandSyncWorker(
         secureStateStore.clearRecoverySignal()
         notifier.clearRecoveryAlerts()
         vpnManager.clearProfile(applicationContext)
+        clearConnectionIntent()
         notifier.showSecurityAlert(
             title = title,
             message = message,
@@ -524,6 +552,25 @@ class LabGuardCommandSyncWorker(
         private const val STATUS_DELIVERED = "DELIVERED"
         private const val STATUS_SUCCEEDED = "SUCCEEDED"
         private const val STATUS_FAILED = "FAILED"
+    }
+
+    private fun defaultRuntimePreferences(): LabGuardSecureStateStore.StoredRuntimePreferences {
+        return LabGuardSecureStateStore.StoredRuntimePreferences(
+            notificationsEnabled = true,
+            autoConnectEnabled = true,
+            killSwitchEnabled = true,
+            desiredConnected = false,
+            apiBaseUrl = "",
+        )
+    }
+
+    private fun clearConnectionIntent() {
+        secureStateStore.writeRuntimePreferences(
+            (secureStateStore.readRuntimePreferences()
+                ?: defaultRuntimePreferences()).copy(
+                desiredConnected = false,
+            ),
+        )
     }
 }
 

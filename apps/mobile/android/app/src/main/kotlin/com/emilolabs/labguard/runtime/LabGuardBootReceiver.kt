@@ -60,7 +60,10 @@ class LabGuardBootReceiver : BroadcastReceiver() {
             LabGuardCommandSyncScheduler.disable(applicationContext)
         }
 
-        if (runtimePreferences?.autoConnectEnabled == true) {
+        if (
+            runtimePreferences?.autoConnectEnabled == true &&
+            runtimePreferences.desiredConnected
+        ) {
             LabGuardBootRestoreWorker.enqueue(applicationContext)
         }
     }

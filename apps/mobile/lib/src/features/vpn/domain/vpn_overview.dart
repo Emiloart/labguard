@@ -277,11 +277,29 @@ class VpnControlState {
       nativeStatus.profileInstalled;
 }
 
+bool shouldAttemptAutoConnect({
+  required VpnNativeStatus status,
+  required bool autoConnectEnabled,
+}) {
+  if (!autoConnectEnabled || !status.desiredConnected) {
+    return false;
+  }
+
+  if (!status.permissionGranted || !status.profileInstalled) {
+    return false;
+  }
+
+  return status.tunnelState == VpnConnectionState.disconnected ||
+      status.tunnelState == VpnConnectionState.error;
+}
+
 class VpnPlatformCapabilities {
   const VpnPlatformCapabilities({
     required this.platform,
     required this.vpnServicePrepared,
     required this.wireGuardBackendIntegrated,
+    required this.supportsAlwaysOnSystemSettings,
+    required this.killSwitchManagedBySystem,
     required this.permissionGranted,
     required this.packageName,
     required this.notes,
@@ -293,6 +311,10 @@ class VpnPlatformCapabilities {
       vpnServicePrepared: json['vpnServicePrepared'] as bool? ?? false,
       wireGuardBackendIntegrated:
           json['wireGuardBackendIntegrated'] as bool? ?? false,
+      supportsAlwaysOnSystemSettings:
+          json['supportsAlwaysOnSystemSettings'] as bool? ?? false,
+      killSwitchManagedBySystem:
+          json['killSwitchManagedBySystem'] as bool? ?? false,
       permissionGranted: json['permissionGranted'] as bool? ?? false,
       packageName: json['packageName'] as String? ?? '',
       notes: json['notes'] as String? ?? '',
@@ -302,6 +324,8 @@ class VpnPlatformCapabilities {
   final String platform;
   final bool vpnServicePrepared;
   final bool wireGuardBackendIntegrated;
+  final bool supportsAlwaysOnSystemSettings;
+  final bool killSwitchManagedBySystem;
   final bool permissionGranted;
   final String packageName;
   final String notes;
@@ -315,6 +339,8 @@ class VpnNativeStatus {
     required this.tunnelName,
     required this.serverId,
     required this.profileRevision,
+    required this.desiredConnected,
+    required this.killSwitchRequested,
     required this.currentIp,
     required this.bytesReceived,
     required this.bytesSent,
@@ -334,6 +360,8 @@ class VpnNativeStatus {
       tunnelName: json['tunnelName'] as String? ?? 'labguard',
       serverId: json['serverId'] as String? ?? '',
       profileRevision: json['profileRevision'] as int? ?? 0,
+      desiredConnected: json['desiredConnected'] as bool? ?? false,
+      killSwitchRequested: json['killSwitchRequested'] as bool? ?? false,
       currentIp: json['currentIp'] as String? ?? 'Unavailable',
       bytesReceived: (json['bytesReceived'] as num?)?.toInt() ?? 0,
       bytesSent: (json['bytesSent'] as num?)?.toInt() ?? 0,
@@ -352,6 +380,8 @@ class VpnNativeStatus {
   final String tunnelName;
   final String serverId;
   final int profileRevision;
+  final bool desiredConnected;
+  final bool killSwitchRequested;
   final String currentIp;
   final int bytesReceived;
   final int bytesSent;

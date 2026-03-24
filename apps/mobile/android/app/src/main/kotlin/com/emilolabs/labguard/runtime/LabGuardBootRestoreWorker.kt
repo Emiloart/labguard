@@ -24,7 +24,7 @@ class LabGuardBootRestoreWorker(
             secureStateStore.readRuntimePreferences()
                 ?: return Result.success()
 
-        if (!runtimePreferences.autoConnectEnabled) {
+        if (!runtimePreferences.autoConnectEnabled || !runtimePreferences.desiredConnected) {
             return Result.success()
         }
 

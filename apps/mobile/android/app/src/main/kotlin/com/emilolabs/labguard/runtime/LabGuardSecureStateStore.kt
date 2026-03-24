@@ -31,6 +31,8 @@ class LabGuardSecureStateStore(
         return StoredRuntimePreferences(
             notificationsEnabled = payload.optBoolean("notificationsEnabled", true),
             autoConnectEnabled = payload.optBoolean("autoConnectEnabled", true),
+            killSwitchEnabled = payload.optBoolean("killSwitchEnabled", true),
+            desiredConnected = payload.optBoolean("desiredConnected", false),
             apiBaseUrl = payload.optString("apiBaseUrl", ""),
         )
     }
@@ -40,6 +42,8 @@ class LabGuardSecureStateStore(
             JSONObject()
                 .put("notificationsEnabled", preferences.notificationsEnabled)
                 .put("autoConnectEnabled", preferences.autoConnectEnabled)
+                .put("killSwitchEnabled", preferences.killSwitchEnabled)
+                .put("desiredConnected", preferences.desiredConnected)
                 .put("apiBaseUrl", preferences.apiBaseUrl)
 
         writeRaw(RUNTIME_PREFERENCES_KEY, payload.toString())
@@ -296,6 +300,8 @@ class LabGuardSecureStateStore(
     data class StoredRuntimePreferences(
         val notificationsEnabled: Boolean,
         val autoConnectEnabled: Boolean,
+        val killSwitchEnabled: Boolean,
+        val desiredConnected: Boolean,
         val apiBaseUrl: String,
     )
 

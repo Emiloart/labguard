@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../../core/platform/android_vpn_bridge.dart';
 import '../../settings/application/settings_controller.dart';
 import '../application/vpn_preferences_controller.dart';
 import '../application/vpn_session_controller.dart';
@@ -52,6 +53,7 @@ class VpnScreen extends ConsumerWidget {
     final preferences = settings.valueOrNull!.preferences;
     final settingsController = ref.read(settingsControllerProvider.notifier);
     final vpnController = ref.read(vpnSessionControllerProvider.notifier);
+    final vpnBridge = ref.read(androidVpnBridgeProvider);
     final busy = sessionState.isLoading;
     final selectedServerId =
         control.profile?.serverId ?? control.remoteSession.serverId;
@@ -199,7 +201,7 @@ class VpnScreen extends ConsumerWidget {
                 },
                 title: const Text('Kill switch'),
                 subtitle: const Text(
-                  'Prevent traffic leakage when the tunnel is expected to be active.',
+                  'Request OS-level blocking through Android Always-on VPN and Block connections without VPN.',
                 ),
               ),
               SwitchListTile.adaptive(
@@ -211,7 +213,7 @@ class VpnScreen extends ConsumerWidget {
                 },
                 title: const Text('Auto-connect'),
                 subtitle: const Text(
-                  'Bring the tunnel up automatically after app start or trusted policy match.',
+                  'Reconnect on startup and recovery only while LabGuard still has an active keep-connected intent.',
                 ),
               ),
               SwitchListTile.adaptive(
@@ -259,6 +261,18 @@ class VpnScreen extends ConsumerWidget {
                     : 'Required',
               ),
               _MetadataRow(
+                label: 'Connection intent',
+                value: control.nativeStatus.desiredConnected
+                    ? 'Maintain tunnel'
+                    : 'Manual only',
+              ),
+              _MetadataRow(
+                label: 'Kill switch',
+                value: control.nativeStatus.killSwitchRequested
+                    ? 'Requested'
+                    : 'Not requested',
+              ),
+              _MetadataRow(
                 label: 'Profile installed',
                 value: control.nativeStatus.profileInstalled
                     ? 'Revision ${control.nativeStatus.profileRevision}'
@@ -277,6 +291,15 @@ class VpnScreen extends ConsumerWidget {
                 value: _timestampLabel(control.remoteSession.lastHeartbeatAt),
               ),
               const SizedBox(height: 12),
+              if (control.nativeStatus.killSwitchRequested) ...[
+                Text(
+                  control.capabilities.killSwitchManagedBySystem
+                      ? 'LabGuard can only enforce the kill switch through Android VPN settings. Enable Always-on VPN and Block connections without VPN there.'
+                      : 'Kill switch enforcement is unavailable on this Android build.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+              ],
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -293,6 +316,11 @@ class VpnScreen extends ConsumerWidget {
                     onPressed: busy ? null : vpnController.revokeProfile,
                     child: const Text('Revoke Profile'),
                   ),
+                  if (control.capabilities.supportsAlwaysOnSystemSettings)
+                    OutlinedButton(
+                      onPressed: () => vpnBridge.openVpnSettings(),
+                      child: const Text('Android VPN Settings'),
+                    ),
                 ],
               ),
             ],
