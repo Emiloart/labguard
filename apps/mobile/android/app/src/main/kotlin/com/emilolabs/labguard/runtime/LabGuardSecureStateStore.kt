@@ -30,6 +30,8 @@ class LabGuardSecureStateStore(
 
         return StoredRuntimePreferences(
             notificationsEnabled = payload.optBoolean("notificationsEnabled", true),
+            autoConnectEnabled = payload.optBoolean("autoConnectEnabled", true),
+            apiBaseUrl = payload.optString("apiBaseUrl", ""),
         )
     }
 
@@ -37,8 +39,26 @@ class LabGuardSecureStateStore(
         val payload =
             JSONObject()
                 .put("notificationsEnabled", preferences.notificationsEnabled)
+                .put("autoConnectEnabled", preferences.autoConnectEnabled)
+                .put("apiBaseUrl", preferences.apiBaseUrl)
 
         writeRaw(RUNTIME_PREFERENCES_KEY, payload.toString())
+    }
+
+    fun readRecoverySignal(): StoredRecoverySignal? {
+        val raw = readRaw(RECOVERY_SIGNAL_KEY) ?: return null
+        val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        val message = payload.optString("message", "")
+
+        if (message.isBlank()) {
+            return null
+        }
+
+        return StoredRecoverySignal(
+            message = message,
+            receivedAt = payload.optString("receivedAt", ""),
+            alarmRequested = payload.optBoolean("alarmRequested", false),
+        )
     }
 
     fun readVpnProfile(deviceId: String): StoredVpnProfile? {
@@ -275,6 +295,14 @@ class LabGuardSecureStateStore(
 
     data class StoredRuntimePreferences(
         val notificationsEnabled: Boolean,
+        val autoConnectEnabled: Boolean,
+        val apiBaseUrl: String,
+    )
+
+    data class StoredRecoverySignal(
+        val message: String,
+        val receivedAt: String,
+        val alarmRequested: Boolean,
     )
 
     companion object {

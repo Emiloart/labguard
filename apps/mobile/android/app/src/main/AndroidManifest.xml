@@ -44,6 +44,16 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".runtime.LabGuardBootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+            </intent-filter>
+        </receiver>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

@@ -54,6 +54,7 @@ class SettingsController extends AsyncNotifier<SettingsBundle> {
         .read(androidBackgroundRuntimeBridgeProvider)
         .syncRuntimePreferences(
           notificationsEnabled: preferences.notificationsEnabled,
+          autoConnectEnabled: preferences.autoConnectEnabled,
         );
   }
 }

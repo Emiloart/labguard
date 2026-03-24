@@ -33,11 +33,18 @@ private class LabGuardRuntimeMethodCallHandler(
             "configureBackgroundSync" -> {
                 val enabled = call.argument<Boolean>("enabled") ?: false
                 val apiBaseUrl = call.argument<String>("apiBaseUrl").orEmpty()
+                val existingPreferences =
+                    secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
 
                 LabGuardCommandSyncScheduler.configure(
                     context = context,
                     enabled = enabled,
                     apiBaseUrl = apiBaseUrl,
+                )
+                secureStateStore.writeRuntimePreferences(
+                    existingPreferences.copy(
+                        apiBaseUrl = if (enabled) apiBaseUrl else "",
+                    ),
                 )
                 result.success(null)
             }
@@ -53,9 +60,14 @@ private class LabGuardRuntimeMethodCallHandler(
 
             "syncRuntimePreferences" -> {
                 val notificationsEnabled = call.argument<Boolean>("notificationsEnabled") ?: true
+                val autoConnectEnabled = call.argument<Boolean>("autoConnectEnabled") ?: true
+                val existingPreferences =
+                    secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
+
                 secureStateStore.writeRuntimePreferences(
-                    LabGuardSecureStateStore.StoredRuntimePreferences(
+                    existingPreferences.copy(
                         notificationsEnabled = notificationsEnabled,
+                        autoConnectEnabled = autoConnectEnabled,
                     ),
                 )
                 result.success(null)
@@ -63,5 +75,13 @@ private class LabGuardRuntimeMethodCallHandler(
 
             else -> result.notImplemented()
         }
+    }
+
+    private fun defaultRuntimePreferences(): LabGuardSecureStateStore.StoredRuntimePreferences {
+        return LabGuardSecureStateStore.StoredRuntimePreferences(
+            notificationsEnabled = true,
+            autoConnectEnabled = true,
+            apiBaseUrl = "",
+        )
     }
 }

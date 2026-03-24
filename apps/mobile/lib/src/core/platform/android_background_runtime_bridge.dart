@@ -39,10 +39,12 @@ class AndroidBackgroundRuntimeBridge {
 
   Future<void> syncRuntimePreferences({
     required bool notificationsEnabled,
+    required bool autoConnectEnabled,
   }) async {
     try {
       await _channel.invokeMethod<void>('syncRuntimePreferences', {
         'notificationsEnabled': notificationsEnabled,
+        'autoConnectEnabled': autoConnectEnabled,
       });
     } on MissingPluginException {
       // Android-specific bridge unavailable in tests or future non-Android builds.
