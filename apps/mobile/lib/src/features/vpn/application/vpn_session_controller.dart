@@ -268,6 +268,7 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     return ref
         .read(androidVpnBridgeProvider)
         .installProfile(
+          deviceId: profile.deviceId,
           tunnelName: profile.tunnelName,
           serverId: profile.serverId,
           revision: profile.revision,

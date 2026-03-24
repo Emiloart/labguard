@@ -115,21 +115,30 @@ class AuthController extends Notifier<AuthSessionState> {
     state = state.copyWith(clearError: true);
   }
 
-  Future<void> _handleExternalSessionInvalidation() async {
-    final bootstrap = await ref.read(authRepositoryProvider).bootstrap();
+  Future<void> revalidateStoredSession() async {
+    final result = await ref.read(authRepositoryProvider).bootstrap();
+    final currentAccessToken = state.session?.accessToken;
+    final nextAccessToken = result.session?.accessToken;
+    final sessionChanged =
+        currentAccessToken != nextAccessToken ||
+        state.session?.device.id != result.session?.device.id;
 
-    if (bootstrap.session != null || state.stage == bootstrap.stage) {
+    if (state.stage == result.stage && !sessionChanged) {
       return;
     }
 
     _invalidateAppData();
     state = state.copyWith(
-      stage: bootstrap.stage,
-      session: bootstrap.session,
-      clearSession: bootstrap.session == null,
+      stage: result.stage,
+      session: result.session,
+      clearSession: result.session == null,
       isBusy: false,
       clearError: true,
     );
+  }
+
+  Future<void> _handleExternalSessionInvalidation() async {
+    await revalidateStoredSession();
   }
 
   void _invalidateAppData() {

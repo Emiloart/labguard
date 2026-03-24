@@ -3,9 +3,12 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config/app_environment.dart';
+import '../../core/platform/android_background_runtime_bridge.dart';
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/domain/auth_state.dart';
 import '../../features/remote_actions/application/remote_command_runtime.dart';
+import '../../features/remote_actions/data/recovery_signal_store.dart';
 import '../../features/vpn/application/vpn_session_controller.dart';
 
 class AppRuntimeBoundary extends ConsumerStatefulWidget {
@@ -41,6 +44,13 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
       return;
     }
 
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_scheduleBackgroundSyncNow());
+    }
+
     if (state == AppLifecycleState.resumed) {
       unawaited(_synchronize());
     }
@@ -61,9 +71,11 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
         }
 
         if (_runtimeActive) {
+          unawaited(_configureBackgroundSync(enabled: true));
           _startPolling();
           unawaited(_synchronize());
         } else {
+          unawaited(_configureBackgroundSync(enabled: false));
           _stopPolling();
         }
       });
@@ -85,13 +97,21 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
 
   Future<void> _synchronize() async {
     try {
-      await ref.read(remoteCommandRuntimeProvider).synchronizeCurrentDevice();
+      await ref.read(authControllerProvider.notifier).revalidateStoredSession();
     } catch (_) {
-      // Runtime reconciliation should not crash the shell.
+      // Session revalidation should not crash the shell.
     }
+
+    ref.read(recoverySignalInvalidationProvider.notifier).state++;
 
     if (ref.read(authControllerProvider).stage != AuthStage.signedIn) {
       return;
+    }
+
+    try {
+      await ref.read(remoteCommandRuntimeProvider).synchronizeCurrentDevice();
+    } catch (_) {
+      // Runtime reconciliation should not crash the shell.
     }
 
     try {
@@ -99,5 +119,20 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
     } catch (_) {
       // VPN refresh errors are surfaced in the VPN screen itself.
     }
+  }
+
+  Future<void> _configureBackgroundSync({required bool enabled}) {
+    return ref
+        .read(androidBackgroundRuntimeBridgeProvider)
+        .configureBackgroundSync(
+          enabled: enabled,
+          apiBaseUrl: AppEnvironment.apiBaseUrl,
+        );
+  }
+
+  Future<void> _scheduleBackgroundSyncNow() {
+    return ref
+        .read(androidBackgroundRuntimeBridgeProvider)
+        .triggerBackgroundSync(apiBaseUrl: AppEnvironment.apiBaseUrl);
   }
 }

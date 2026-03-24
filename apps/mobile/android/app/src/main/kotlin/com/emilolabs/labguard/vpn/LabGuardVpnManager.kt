@@ -2,6 +2,7 @@ package com.emilolabs.labguard.vpn
 
 import android.content.Context
 import android.net.VpnService
+import com.emilolabs.labguard.runtime.LabGuardSecureStateStore
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
@@ -14,6 +15,7 @@ class LabGuardVpnManager private constructor(
     private val applicationContext: Context,
 ) {
     private val backend = GoBackend(applicationContext)
+    private val secureStateStore = LabGuardSecureStateStore(applicationContext)
 
     @Volatile
     private var installedProfile: InstalledProfile? = null
@@ -41,6 +43,7 @@ class LabGuardVpnManager private constructor(
     }
 
     fun getStatus(permissionContext: Context): Map<String, Any?> {
+        restoreInstalledProfileIfNeeded()
         val profile = installedProfile
         val permissionGranted = VpnService.prepare(permissionContext) == null
         val tunnelState = when {
@@ -52,6 +55,14 @@ class LabGuardVpnManager private constructor(
         }
         val statistics = activeStatistics()
         val latestHandshake = latestHandshake(statistics)
+
+        if (profile != null && tunnelState == "CONNECTED") {
+            LabGuardVpnRuntimeService.start(
+                context = applicationContext,
+                tunnelName = profile.tunnelName,
+                serverId = profile.serverId,
+            )
+        }
 
         return mapOf(
             "permissionGranted" to permissionGranted,
@@ -71,6 +82,7 @@ class LabGuardVpnManager private constructor(
     }
 
     fun installProfile(
+        deviceId: String,
         tunnelName: String,
         serverId: String,
         revision: Int,
@@ -91,20 +103,24 @@ class LabGuardVpnManager private constructor(
 
         installedProfile =
             InstalledProfile(
+                deviceId = deviceId,
                 tunnelName = sanitizedTunnelName,
                 serverId = serverId,
                 revision = revision,
+                configText = configText,
                 config = parsedConfig,
                 interfaceAddress = interfaceAddress,
             )
         activeTunnel = LabGuardTunnel(sanitizedTunnelName)
         connectedAtEpochMillis = null
         lastError = null
+        persistInstalledProfile()
 
         return getStatus(applicationContext)
     }
 
     fun connect(permissionContext: Context): Map<String, Any?> {
+        restoreInstalledProfileIfNeeded()
         val profile = installedProfile
             ?: throw IllegalStateException("No WireGuard profile is installed for LabGuard.")
 
@@ -135,16 +151,25 @@ class LabGuardVpnManager private constructor(
     }
 
     fun disconnect(permissionContext: Context): Map<String, Any?> {
+        restoreInstalledProfileIfNeeded()
         disconnectInternal()
         return getStatus(permissionContext)
     }
 
     fun clearProfile(permissionContext: Context): Map<String, Any?> {
+        restoreInstalledProfileIfNeeded()
+        val deviceId =
+            installedProfile?.deviceId
+                ?: secureStateStore.readSession()?.deviceId
+                ?: secureStateStore.readAnyVpnProfile()?.deviceId
         disconnectInternal()
         installedProfile = null
         activeTunnel = null
         connectedAtEpochMillis = null
         lastError = null
+        if (!deviceId.isNullOrBlank()) {
+            secureStateStore.clearVpnProfile(deviceId)
+        }
         return getStatus(permissionContext)
     }
 
@@ -161,6 +186,65 @@ class LabGuardVpnManager private constructor(
 
         connectedAtEpochMillis = null
         LabGuardVpnRuntimeService.stop(applicationContext)
+    }
+
+    private fun restoreInstalledProfileIfNeeded() {
+        if (installedProfile != null) {
+            return
+        }
+
+        val persistedProfile =
+            secureStateStore.readSession()?.deviceId?.let(secureStateStore::readVpnProfile)
+                ?: secureStateStore.readAnyVpnProfile()
+                ?: return
+
+        runCatching {
+            val parsedConfig = parseConfig(persistedProfile.configText)
+            val interfaceAddress =
+                parsedConfig
+                    .getInterface()
+                    .getAddresses()
+                    .firstOrNull()
+                    ?.toString() ?: "Unavailable"
+
+            installedProfile =
+                InstalledProfile(
+                    deviceId = persistedProfile.deviceId,
+                    tunnelName = sanitizeTunnelName(persistedProfile.tunnelName),
+                    serverId = persistedProfile.serverId,
+                    revision = persistedProfile.revision,
+                    configText = persistedProfile.configText,
+                    config = parsedConfig,
+                    interfaceAddress = interfaceAddress,
+                )
+            activeTunnel = LabGuardTunnel(installedProfile!!.tunnelName)
+        }.onFailure { error ->
+            lastError = error.message ?: "LabGuard could not restore the stored WireGuard profile."
+        }
+    }
+
+    private fun persistInstalledProfile() {
+        val profile = installedProfile ?: return
+        val existing = secureStateStore.readVpnProfile(profile.deviceId)
+
+        secureStateStore.writeVpnProfile(
+            LabGuardSecureStateStore.StoredVpnProfile(
+                deviceId = profile.deviceId,
+                profileStatus = "ACTIVE",
+                revision = profile.revision,
+                tunnelName = profile.tunnelName,
+                serverId = profile.serverId,
+                serverName = existing?.serverName ?: profile.serverId,
+                endpoint = existing?.endpoint ?: profile.serverId,
+                dnsServers = existing?.dnsServers ?: emptyList(),
+                issuedAt = existing?.issuedAt,
+                rotatedAt = existing?.rotatedAt,
+                configText = profile.configText,
+                note =
+                    existing?.note
+                        ?: "Stored by the Android VPN runtime for process recovery.",
+            ),
+        )
     }
 
     private fun currentTunnelState(): Tunnel.State {
@@ -224,9 +308,11 @@ class LabGuardVpnManager private constructor(
     private fun toIsoString(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).toString()
 
     private data class InstalledProfile(
+        val deviceId: String,
         val tunnelName: String,
         val serverId: String,
         val revision: Int,
+        val configText: String,
         val config: Config,
         val interfaceAddress: String,
     )

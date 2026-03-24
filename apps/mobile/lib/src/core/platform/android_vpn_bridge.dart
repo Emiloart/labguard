@@ -36,6 +36,7 @@ class AndroidVpnBridge {
   }
 
   Future<VpnNativeStatus> installProfile({
+    required String deviceId,
     required String tunnelName,
     required String serverId,
     required int revision,
@@ -43,6 +44,7 @@ class AndroidVpnBridge {
   }) async {
     final values = await _channel
         .invokeMapMethod<String, dynamic>('installProfile', {
+          'deviceId': deviceId,
           'tunnelName': tunnelName,
           'serverId': serverId,
           'revision': revision,

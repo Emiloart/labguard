@@ -74,19 +74,21 @@ private class LabGuardVpnMethodCallHandler(
             }
 
             "installProfile" -> {
+                val deviceId = call.argument<String>("deviceId")
                 val tunnelName = call.argument<String>("tunnelName")
                 val serverId = call.argument<String>("serverId")
                 val revision = call.argument<Int>("revision")
                 val config = call.argument<String>("config")
 
-                if (tunnelName.isNullOrBlank() ||
+                if (deviceId.isNullOrBlank() ||
+                    tunnelName.isNullOrBlank() ||
                     serverId.isNullOrBlank() ||
                     revision == null ||
                     config.isNullOrBlank()
                 ) {
                     result.error(
                         "vpn_invalid_profile",
-                        "Tunnel installation requires tunnelName, serverId, revision, and config.",
+                        "Tunnel installation requires deviceId, tunnelName, serverId, revision, and config.",
                         null,
                     )
                     return
@@ -94,6 +96,7 @@ private class LabGuardVpnMethodCallHandler(
 
                 runAsync(result) {
                     manager.installProfile(
+                        deviceId = deviceId,
                         tunnelName = tunnelName,
                         serverId = serverId,
                         revision = revision,

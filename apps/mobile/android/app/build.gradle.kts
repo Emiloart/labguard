@@ -34,6 +34,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.11.1")
     implementation("com.wireguard.android:tunnel:1.0.20260102")
 }
 
