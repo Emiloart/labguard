@@ -128,6 +128,25 @@ type RemoteCommandRecord = {
   resultMessage?: string;
 };
 
+type AuditLogOutcome = 'SUCCESS' | 'FAILURE';
+
+type AuditLogRecord = {
+  id: string;
+  action: string;
+  targetType:
+    | 'AUTH'
+    | 'DEVICE'
+    | 'VPN_PROFILE'
+    | 'REMOTE_COMMAND'
+    | 'SECURITY_EVENT'
+    | 'LOCATION';
+  targetId: string;
+  outcome: AuditLogOutcome;
+  summary: string;
+  actorLabel: string;
+  createdAt: string;
+};
+
 type VpnServerRecord = {
   id: string;
   name: string;
@@ -176,7 +195,7 @@ type VpnSessionPatch = {
   lastError?: string;
 };
 
-const sessionTokens = {
+let sessionTokens = {
   accessToken: 'labguard-phase-2-access-token',
   refreshToken: 'labguard-phase-2-refresh-token',
   expiresInSeconds: 900,
@@ -323,6 +342,29 @@ let remoteCommands: RemoteCommandRecord[] = [
     status: 'QUEUED',
     commandType: 'RING_ALARM',
     queuedAt: isoAgo({ minutes: 4 }),
+  },
+];
+
+let auditLogs: AuditLogRecord[] = [
+  {
+    id: 'audit-01',
+    action: 'DEVICE_MARKED_LOST',
+    targetType: 'DEVICE',
+    targetId: 'galaxy-s24',
+    outcome: 'SUCCESS',
+    summary: 'Lost mode was enabled for Travel Device.',
+    actorLabel: 'Emilo Owner',
+    createdAt: isoAgo({ minutes: 21 }),
+  },
+  {
+    id: 'audit-02',
+    action: 'VPN_PROFILE_ROTATED',
+    targetType: 'VPN_PROFILE',
+    targetId: 'pixel-9-pro',
+    outcome: 'SUCCESS',
+    summary: 'A fresh WireGuard profile revision was issued.',
+    actorLabel: 'Emilo Owner',
+    createdAt: isoAgo({ hours: 1 }),
   },
 ];
 
@@ -676,6 +718,16 @@ function nextId(prefix: string) {
   return `${prefix}-${randomBytes(4).toString('hex')}`;
 }
 
+function issueSessionTokens() {
+  sessionTokens = {
+    accessToken: `labguard-access-${randomBytes(12).toString('hex')}`,
+    refreshToken: `labguard-refresh-${randomBytes(12).toString('hex')}`,
+    expiresInSeconds: 900,
+  };
+
+  return sessionTokens;
+}
+
 function findDeviceSeed(deviceId: string) {
   return deviceSeeds.find((device) => device.id == deviceId) ?? null;
 }
@@ -696,6 +748,35 @@ function findDeviceName(deviceId: string) {
 
 function prependSecurityEvent(event: SecurityEventRecord) {
   securityEvents = [event, ...securityEvents];
+}
+
+function prependAuditLog(entry: AuditLogRecord) {
+  auditLogs = [entry, ...auditLogs].slice(0, 200);
+}
+
+function addAuditLog({
+  action,
+  targetType,
+  targetId,
+  outcome = 'SUCCESS',
+  summary,
+}: {
+  action: string;
+  targetType: AuditLogRecord['targetType'];
+  targetId: string;
+  outcome?: AuditLogOutcome;
+  summary: string;
+}) {
+  prependAuditLog({
+    id: nextId('audit'),
+    action,
+    targetType,
+    targetId,
+    outcome,
+    summary,
+    actorLabel: viewer.displayName,
+    createdAt: nowIso(),
+  });
 }
 
 function addSecurityEvent({
@@ -827,6 +908,24 @@ export function getAuthSessionEnvelope() {
   };
 }
 
+export function issueLoginSession() {
+  issueSessionTokens();
+  return getAuthSessionEnvelope();
+}
+
+export function rotateRefreshSession() {
+  issueSessionTokens();
+  return getAuthSessionEnvelope();
+}
+
+export function clearIssuedSession() {
+  sessionTokens = {
+    accessToken: '',
+    refreshToken: '',
+    expiresInSeconds: 0,
+  };
+}
+
 export function getSessionSnapshot() {
   return {
     session: {
@@ -941,6 +1040,13 @@ export function updatePreferences(patch: Partial<SecurityPreferenceState>) {
     ...patch,
   };
 
+  addAuditLog({
+    action: 'SETTINGS_UPDATED',
+    targetType: 'AUTH',
+    targetId: viewer.id,
+    summary: 'Security preferences were updated.',
+  });
+
   return getPreferences();
 }
 
@@ -962,6 +1068,23 @@ export function getAdminOverview() {
     ).length,
     unreadSecurityEvents: events.filter((event) => event.unread).length,
   };
+}
+
+export function listAuditLogs() {
+  return [...auditLogs].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  );
+}
+
+export function recordAuditLogEntry(entry: {
+  action: string;
+  targetType: AuditLogRecord['targetType'];
+  targetId: string;
+  summary: string;
+  outcome?: AuditLogOutcome;
+}) {
+  addAuditLog(entry);
+  return listAuditLogs()[0]!;
 }
 
 export function getVpnServers() {
@@ -998,6 +1121,12 @@ export function rotateVpnProfile(deviceId: string) {
     title: 'VPN credentials rotated',
     summary: 'A fresh WireGuard profile was issued for this device.',
     deviceId,
+  });
+  addAuditLog({
+    action: 'VPN_PROFILE_ROTATED',
+    targetType: 'VPN_PROFILE',
+    targetId: deviceId,
+    summary: 'A fresh WireGuard profile revision was issued.',
   });
 
   return {
@@ -1040,6 +1169,12 @@ export function revokeVpnProfile(deviceId: string) {
     summary:
       'The control plane revoked the active tunnel profile for this device.',
     deviceId,
+  });
+  addAuditLog({
+    action: 'VPN_PROFILE_REVOKED',
+    targetType: 'VPN_PROFILE',
+    targetId: deviceId,
+    summary: 'VPN access was revoked for the device.',
   });
 
   return {
@@ -1165,6 +1300,12 @@ export function updateDeviceMetadata(
     summary: 'Device label or ownership metadata was changed.',
     deviceId,
   });
+  addAuditLog({
+    action: 'DEVICE_METADATA_UPDATED',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Device label or primary ownership metadata changed.',
+  });
 
   return getDeviceDetail(deviceId);
 }
@@ -1194,6 +1335,12 @@ export function markDeviceLostMode(deviceId: string) {
       'Lost mode is active and elevated location updates are permitted while the device is online.',
     deviceId,
   });
+  addAuditLog({
+    action: 'DEVICE_MARKED_LOST',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Lost mode was enabled for the device.',
+  });
 
   return {
     deviceId,
@@ -1213,6 +1360,12 @@ export function markDeviceRecovered(deviceId: string) {
     title: `${device.name} marked recovered`,
     summary: 'Lost mode was cleared and elevated tracking was disabled.',
     deviceId,
+  });
+  addAuditLog({
+    action: 'DEVICE_MARKED_RECOVERED',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Lost mode was cleared for the device.',
   });
 
   return {
@@ -1234,6 +1387,12 @@ export function revokeDeviceAccess(deviceId: string) {
     title: `${device.name} access revoked`,
     summary: 'The device can no longer authenticate or obtain VPN access.',
     deviceId,
+  });
+  addAuditLog({
+    action: 'DEVICE_REVOKED',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Device trust and VPN access were revoked.',
   });
 
   return {
@@ -1259,6 +1418,12 @@ export function suspendDevice(deviceId: string) {
     summary: 'Device access is paused until it is reapproved.',
     deviceId,
   });
+  addAuditLog({
+    action: 'DEVICE_SUSPENDED',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Device access was suspended pending reapproval.',
+  });
 
   return {
     deviceId,
@@ -1276,6 +1441,12 @@ export function rotateDeviceCredentials(deviceId: string) {
     title: 'Device credentials rotated',
     summary: 'The device must fetch the latest secure configuration.',
     deviceId,
+  });
+  addAuditLog({
+    action: 'DEVICE_CREDENTIALS_ROTATED',
+    targetType: 'DEVICE',
+    targetId: deviceId,
+    summary: 'Device credentials and VPN profile were rotated.',
   });
 
   return {
@@ -1348,6 +1519,12 @@ export function recordDeviceLocation(
       'A fresh location sample was recorded for this device and appended to recovery history.',
     deviceId,
   });
+  addAuditLog({
+    action: 'DEVICE_LOCATION_REFRESHED',
+    targetType: 'LOCATION',
+    targetId: deviceId,
+    summary: 'A fresh location sample was recorded for the device.',
+  });
 
   return {
     deviceId,
@@ -1397,6 +1574,12 @@ export function queueRemoteCommand({
         ? 'A remote action was queued for delivery to the device.'
         : `A remote action was queued with operator message: ${message}`,
     deviceId,
+  });
+  addAuditLog({
+    action: 'REMOTE_COMMAND_QUEUED',
+    targetType: 'REMOTE_COMMAND',
+    targetId: command.commandId,
+    summary: `${command.commandType} was queued for device delivery.`,
   });
 
   return command;
@@ -1452,6 +1635,14 @@ export function reportRemoteCommandResult(
     });
   }
 
+  addAuditLog({
+    action: 'REMOTE_COMMAND_RESULT_RECORDED',
+    targetType: 'REMOTE_COMMAND',
+    targetId: command.commandId,
+    outcome: command.status == 'FAILED' ? 'FAILURE' : 'SUCCESS',
+    summary: `${command.commandType} completed with status ${command.status}.`,
+  });
+
   return command;
 }
 
@@ -1459,6 +1650,12 @@ export function markSecurityEventRead(eventId: string) {
   securityEvents = securityEvents.map((event) =>
     event.id == eventId ? { ...event, unread: false } : event,
   );
+  addAuditLog({
+    action: 'SECURITY_EVENT_MARKED_READ',
+    targetType: 'SECURITY_EVENT',
+    targetId: eventId,
+    summary: 'A security event was acknowledged and marked read.',
+  });
 
   return {
     eventId,

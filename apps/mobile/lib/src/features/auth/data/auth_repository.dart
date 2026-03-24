@@ -1,41 +1,35 @@
-import 'dart:convert';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/errors/api_exception.dart';
 import '../../../core/network/labguard_api_client.dart';
-import '../../../core/security/secure_store.dart';
 import '../domain/auth_session.dart';
 import '../domain/auth_state.dart';
+import 'auth_session_store.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(
     client: ref.watch(labGuardApiClientProvider),
-    secureStore: ref.watch(secureStoreProvider),
+    sessionStore: ref.watch(authSessionStoreProvider),
   );
 });
 
 class AuthRepository {
-  AuthRepository({required Dio client, required SecureStore secureStore})
+  AuthRepository({required Dio client, required AuthSessionStore sessionStore})
     : _client = client,
-      _secureStore = secureStore;
+      _sessionStore = sessionStore;
 
   final Dio _client;
-  final SecureStore _secureStore;
-
-  static const _onboardingKey = 'labguard.app.onboarding_complete';
-  static const _sessionKey = 'labguard.auth.session';
+  final AuthSessionStore _sessionStore;
 
   Future<AuthBootstrapResult> bootstrap() async {
-    final onboardingComplete =
-        await _secureStore.read(_onboardingKey) == boolTrue;
+    final onboardingComplete = await _sessionStore.isOnboardingComplete();
 
     if (!onboardingComplete) {
       return const AuthBootstrapResult(stage: AuthStage.onboarding);
     }
 
-    final session = await _readStoredSession();
+    final session = await _sessionStore.readSession();
 
     if (session == null || !session.isPersistable) {
       return const AuthBootstrapResult(stage: AuthStage.signedOut);
@@ -45,7 +39,7 @@ class AuthRepository {
   }
 
   Future<void> completeOnboarding() {
-    return _secureStore.write(key: _onboardingKey, value: boolTrue);
+    return _sessionStore.completeOnboarding();
   }
 
   Future<AuthSession> login({
@@ -60,6 +54,7 @@ class AuthRepository {
           if (inviteCode != null && inviteCode.isNotEmpty)
             'inviteCode': inviteCode,
         },
+        options: Options(extra: const {'skipAuth': true}),
       );
 
       final payload = response.data;
@@ -71,7 +66,7 @@ class AuthRepository {
       }
 
       final session = AuthSession.fromEnvelope(payload);
-      await _persistSession(session);
+      await _sessionStore.writeSession(session);
       await completeOnboarding();
 
       return session;
@@ -83,7 +78,7 @@ class AuthRepository {
   }
 
   Future<AuthSession> restoreTrustedSession() async {
-    final storedSession = await _readStoredSession();
+    final storedSession = await _sessionStore.readSession();
 
     if (storedSession == null || !storedSession.isPersistable) {
       throw const ApiException('No trusted session is stored on this device.');
@@ -108,7 +103,7 @@ class AuthRepository {
         ),
       );
 
-      await _persistSession(refreshedSession);
+      await _sessionStore.writeSession(refreshedSession);
       return refreshedSession;
     } on DioException {
       return storedSession;
@@ -117,30 +112,15 @@ class AuthRepository {
 
   Future<void> logout() async {
     try {
-      await _client.post<void>('/v1/auth/logout');
+      await _client.post<void>(
+        '/v1/auth/logout',
+        options: Options(extra: const {'skipAuth': true}),
+      );
     } on DioException {
       // Local session clearing still takes priority.
     } finally {
-      await _secureStore.delete(_sessionKey);
+      await _sessionStore.clearSession();
     }
-  }
-
-  Future<AuthSession?> _readStoredSession() async {
-    final rawSession = await _secureStore.read(_sessionKey);
-
-    if (rawSession == null || rawSession.isEmpty) {
-      return null;
-    }
-
-    final payload = jsonDecode(rawSession) as Map<String, dynamic>;
-    return AuthSession.fromStoredJson(payload);
-  }
-
-  Future<void> _persistSession(AuthSession session) {
-    return _secureStore.write(
-      key: _sessionKey,
-      value: jsonEncode(session.toJson()),
-    );
   }
 }
 
@@ -150,5 +130,3 @@ class AuthBootstrapResult {
   final AuthStage stage;
   final AuthSession? session;
 }
-
-const boolTrue = 'true';

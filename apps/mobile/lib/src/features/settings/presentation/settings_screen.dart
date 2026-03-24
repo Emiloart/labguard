@@ -123,6 +123,11 @@ class _SettingsContent extends ConsumerWidget {
                 child: const Text('About LabGuard'),
               ),
               const SizedBox(height: 12),
+              FilledButton.tonal(
+                onPressed: () => context.go('/settings/audit'),
+                child: const Text('Audit Trail'),
+              ),
+              const SizedBox(height: 12),
               OutlinedButton(
                 onPressed: () async {
                   await onSignOut();

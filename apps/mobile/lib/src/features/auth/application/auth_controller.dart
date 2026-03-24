@@ -8,6 +8,7 @@ import '../../events/application/security_events_provider.dart';
 import '../../settings/application/settings_controller.dart';
 import '../../vpn/application/vpn_preferences_controller.dart';
 import '../data/auth_repository.dart';
+import '../data/auth_session_store.dart';
 import '../domain/auth_state.dart';
 
 final authControllerProvider =
@@ -15,9 +16,19 @@ final authControllerProvider =
 
 class AuthController extends Notifier<AuthSessionState> {
   bool _bootstrapStarted = false;
+  int _lastInvalidationVersion = 0;
 
   @override
   AuthSessionState build() {
+    final invalidationVersion = ref.watch(authSessionInvalidationProvider);
+
+    if (_lastInvalidationVersion != invalidationVersion) {
+      _lastInvalidationVersion = invalidationVersion;
+      if (invalidationVersion > 0) {
+        Future<void>.microtask(_handleExternalSessionInvalidation);
+      }
+    }
+
     if (!_bootstrapStarted) {
       _bootstrapStarted = true;
       Future<void>.microtask(_bootstrap);
@@ -102,6 +113,24 @@ class AuthController extends Notifier<AuthSessionState> {
 
   void clearError() {
     state = state.copyWith(clearError: true);
+  }
+
+  Future<void> _handleExternalSessionInvalidation() async {
+    final storedSession = await ref
+        .read(authSessionStoreProvider)
+        .readSession();
+
+    if (storedSession != null || state.stage == AuthStage.signedOut) {
+      return;
+    }
+
+    _invalidateAppData();
+    state = state.copyWith(
+      stage: AuthStage.signedOut,
+      clearSession: true,
+      isBusy: false,
+      clearError: true,
+    );
   }
 
   void _invalidateAppData() {
