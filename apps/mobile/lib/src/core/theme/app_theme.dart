@@ -30,6 +30,15 @@ abstract final class AppTheme {
         elevation: 0,
         centerTitle: false,
       ),
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+        },
+      ),
       textTheme: base.textTheme
           .apply(
             bodyColor: LabGuardColors.textPrimary,
@@ -55,6 +64,10 @@ abstract final class AppTheme {
             bodyMedium: base.textTheme.bodyMedium?.copyWith(
               color: LabGuardColors.textSecondary,
               height: 1.4,
+            ),
+            bodySmall: base.textTheme.bodySmall?.copyWith(
+              color: LabGuardColors.textSecondary,
+              height: 1.35,
             ),
           ),
       filledButtonTheme: FilledButtonThemeData(
@@ -99,6 +112,7 @@ abstract final class AppTheme {
         backgroundColor: LabGuardColors.panel,
         indicatorColor: LabGuardColors.accentMuted,
         height: 74,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             color: states.contains(WidgetState.selected)
@@ -121,6 +135,15 @@ abstract final class AppTheme {
               ? LabGuardColors.accent
               : LabGuardColors.border,
         ),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: LabGuardColors.panelElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: LabGuardColors.border),
+        ),
+        textStyle: const TextStyle(color: LabGuardColors.textPrimary),
+        waitDuration: const Duration(milliseconds: 350),
       ),
     );
   }

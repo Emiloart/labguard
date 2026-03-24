@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../devices/application/device_registry_provider.dart';
@@ -69,16 +70,18 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
           children: [
             IconButton(
               onPressed: () => context.go('/devices/${device.id}'),
+              tooltip: 'Back to device details',
               icon: const Icon(Icons.arrow_back),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Find ${device.name}',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-            ),
           ],
+        ),
+        const SizedBox(height: 8),
+        ScreenIntro(
+          eyebrow: 'Recovery',
+          title: 'Find ${device.name}',
+          description:
+              'Last-known location, recovery state, and lost-mode controls for this device.',
+          badge: device.isLost ? 'LOST MODE' : 'TRACKING READY',
         ),
         const SizedBox(height: 16),
         AppPanel(

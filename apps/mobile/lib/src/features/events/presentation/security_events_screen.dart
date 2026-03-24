@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/security_events_provider.dart';
@@ -50,19 +51,12 @@ class _SecurityEventsContent extends ConsumerWidget {
       separatorBuilder: (context, index) => const SizedBox(height: 16),
       itemBuilder: (context, index) {
         if (index == 0) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Security Events',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
+          return const ScreenIntro(
+            eyebrow: 'Security Telemetry',
+            title: 'Security Events',
+            description:
                 'Unread alerts, suspicious state changes, remote action outcomes, and VPN events surface here.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
+            badge: 'LIVE FEED',
           );
         }
 

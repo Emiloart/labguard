@@ -6,6 +6,7 @@ import '../../../core/config/app_environment.dart';
 import '../../../core/platform/android_system_security_bridge.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../auth/application/auth_controller.dart';
 import '../application/device_security_posture_provider.dart';
@@ -170,14 +171,12 @@ class _SettingsContent extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
       children: [
-        Text(
-          'Settings & Security',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${settings.profile.viewerDisplayName} • ${settings.profile.accountName}',
-          style: Theme.of(context).textTheme.bodyMedium,
+        ScreenIntro(
+          eyebrow: 'Trusted Access',
+          title: 'Settings & Security',
+          description:
+              '${settings.profile.viewerDisplayName} • ${settings.profile.accountName}',
+          badge: AppEnvironment.environment.toUpperCase(),
         ),
         const SizedBox(height: 18),
         AppPanel(

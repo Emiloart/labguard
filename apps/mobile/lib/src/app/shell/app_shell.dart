@@ -66,18 +66,23 @@ class AppShell extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(28),
-            child: NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                context.go(_destinations[index].path);
-              },
-              destinations: [
-                for (final destination in _destinations)
-                  NavigationDestination(
-                    icon: Icon(destination.icon),
-                    label: destination.label,
-                  ),
-              ],
+            child: Semantics(
+              container: true,
+              label: 'LabGuard primary navigation',
+              child: NavigationBar(
+                selectedIndex: _currentIndex,
+                onDestinationSelected: (index) {
+                  context.go(_destinations[index].path);
+                },
+                destinations: [
+                  for (final destination in _destinations)
+                    NavigationDestination(
+                      icon: Icon(destination.icon),
+                      label: destination.label,
+                      tooltip: 'Open ${destination.label}',
+                    ),
+                ],
+              ),
             ),
           ),
         ),

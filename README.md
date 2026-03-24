@@ -34,13 +34,18 @@ labguard/
 - Data layer: PostgreSQL with Prisma schema management for clear relational modeling and migrations.
 - VPN: WireGuard as the tunnel foundation, with Android `VpnService` integration isolated behind a Kotlin bridge.
 
-## Phase 1 Delivered Here
+## Current Status
 
-- Monorepo foundation and root workspace files
-- Flutter app shell with premium dark-first branding and modular screen scaffolds
-- Backend service skeleton with versioned module boundaries
-- Initial Prisma schema for users, devices, VPN profiles, locations, remote commands, events, and audit logs
-- Phase plan, API design, and security checklist documentation
+- Phases 1 through 7 are scaffolded across the Flutter app, Android runtime layer, and Fastify control plane.
+- The mobile app now covers branding, onboarding, auth restore, VPN control, device registry, lost-device workflows, remote security actions, audit visibility, Android runtime posture checks, and background hardening.
+- The Android layer includes WireGuard integration, foreground runtime service handling, WorkManager-based background sync, boot recovery, and explicit permission/system-settings handoff.
+- The backend exposes modular auth, devices, VPN, preferences, remote actions, security events, and audit endpoints against a mock control-plane dataset.
+- Release polish now includes global motion tuning, accessibility-oriented screen headers, a stronger About surface, and release playbook documentation.
+
+## Release Readiness
+
+- Release playbook: [docs/release-playbook.md](docs/release-playbook.md)
+- Current limitation: `services/api/src/common/mock/control-plane-data.ts` is still a development mock. Replace it with persistent production services before any production rollout.
 
 ## Next Commands
 

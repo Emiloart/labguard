@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/config/app_environment.dart';
 import '../../../core/widgets/brand_lockup.dart';
 
 class SplashScreen extends StatelessWidget {
@@ -9,22 +10,41 @@ class SplashScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const BrandLockup(),
-                const SizedBox(height: 24),
-                Text(
-                  'Provisioning secure access...',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 14),
-                const LinearProgressIndicator(minHeight: 4),
-              ],
+        child: TweenAnimationBuilder<double>(
+          duration: const Duration(milliseconds: 520),
+          curve: Curves.easeOutCubic,
+          tween: Tween(begin: 0, end: 1),
+          builder: (context, value, child) {
+            return Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: Offset(0, 24 * (1 - value)),
+                child: child,
+              ),
+            );
+          },
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const BrandLockup(),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Establishing secure runtime and trusted operator state...',
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 14),
+                  const LinearProgressIndicator(minHeight: 4),
+                  const SizedBox(height: 16),
+                  Text(
+                    '${AppEnvironment.releaseTrack} • ${AppEnvironment.appVersion}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ),
         ),

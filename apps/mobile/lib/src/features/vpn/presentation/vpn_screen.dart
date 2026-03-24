@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
@@ -62,11 +63,12 @@ class VpnScreen extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
       children: [
-        Text('VPN Core', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 8),
-        Text(
-          'WireGuard tunnel control, profile lifecycle, and Android VPN authorization are managed here.',
-          style: Theme.of(context).textTheme.bodyMedium,
+        const ScreenIntro(
+          eyebrow: 'Tunnel Control',
+          title: 'VPN Core',
+          description:
+              'WireGuard tunnel control, profile lifecycle, and Android VPN authorization are managed here.',
+          badge: 'WIREGUARD',
         ),
         const SizedBox(height: 18),
         AppPanel(

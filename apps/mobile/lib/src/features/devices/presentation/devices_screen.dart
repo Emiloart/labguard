@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/device_registry_provider.dart';
@@ -51,19 +52,12 @@ class _DevicesContent extends StatelessWidget {
       separatorBuilder: (context, index) => const SizedBox(height: 16),
       itemBuilder: (context, index) {
         if (index == 0) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Device Registry',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
+          return const ScreenIntro(
+            eyebrow: 'Trusted Fleet',
+            title: 'Device Registry',
+            description:
                 'Trusted devices, approval state, last activity, and recovery status live here.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
+            badge: 'ACCOUNT SCOPE',
           );
         }
 

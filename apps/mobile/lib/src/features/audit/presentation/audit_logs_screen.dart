@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../application/audit_logs_provider.dart';
@@ -58,21 +59,18 @@ class _AuditLogsContent extends StatelessWidget {
                 children: [
                   IconButton(
                     onPressed: () => context.go('/settings'),
+                    tooltip: 'Back to settings',
                     icon: const Icon(Icons.arrow_back),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Audit Trail',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 8),
-              Text(
-                'Sensitive actions, token changes, trust transitions, and remote command results are recorded here.',
-                style: Theme.of(context).textTheme.bodyMedium,
+              const ScreenIntro(
+                eyebrow: 'Auditability',
+                title: 'Audit Trail',
+                description:
+                    'Sensitive actions, token changes, trust transitions, and remote command results are recorded here.',
+                badge: 'IMMUTABLE HISTORY',
               ),
             ],
           );
