@@ -1,6 +1,7 @@
 import {
   listRemoteCommands,
   queueRemoteCommand,
+  retryRemoteCommand,
   reportRemoteCommandResult,
 } from '../../common/mock/control-plane-data.js';
 
@@ -33,9 +34,17 @@ export class RemoteActionsService {
 
   reportResult(
     commandId: string,
-    payload: Partial<{ status: 'SUCCEEDED' | 'FAILED'; resultMessage: string }>,
+    payload: Partial<{
+      status: 'DELIVERED' | 'SUCCEEDED' | 'FAILED';
+      resultMessage: string;
+      failureCode: string;
+    }>,
   ) {
     return reportRemoteCommandResult(commandId, payload);
+  }
+
+  retryCommand(commandId: string) {
+    return retryRemoteCommand(commandId);
   }
 }
 

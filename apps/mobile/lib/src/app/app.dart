@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/config/app_environment.dart';
 import '../core/theme/app_theme.dart';
+import 'runtime/app_runtime_boundary.dart';
 import 'router/app_router.dart';
 
 class LabGuardApp extends ConsumerWidget {
@@ -19,6 +20,9 @@ class LabGuardApp extends ConsumerWidget {
       theme: AppTheme.dark(),
       darkTheme: AppTheme.dark(),
       routerConfig: router,
+      builder: (context, child) {
+        return AppRuntimeBoundary(child: child ?? const SizedBox.shrink());
+      },
     );
   }
 }

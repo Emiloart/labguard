@@ -221,6 +221,19 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 18),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _busyAction == null
+                      ? () => ref.invalidate(
+                          remoteCommandsProvider(widget.deviceId),
+                        )
+                      : null,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
+                ),
+              ),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -230,9 +243,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                         ? () => _runRemoteCommand(
                             label: 'ring alarm',
                             commandType: RemoteCommandType.ringAlarm,
-                            successMessage: 'Ring/alarm command completed.',
-                            resultMessage:
-                                'Alarm request delivered to the device.',
+                            successMessage: 'Ring/alarm command queued.',
                           )
                         : null,
                     child: _ActionLabel(
@@ -245,9 +256,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                         ? () => _runRemoteCommand(
                             label: 'remote sign out',
                             commandType: RemoteCommandType.signOut,
-                            successMessage: 'Remote sign-out completed.',
-                            resultMessage:
-                                'Active sessions on the device were revoked.',
+                            successMessage: 'Remote sign-out queued.',
                           )
                         : null,
                     child: _ActionLabel(
@@ -269,9 +278,22 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               if (commandItems.isNotEmpty) ...[
                 const SizedBox(height: 18),
                 for (final command in commandItems) ...[
-                  _CommandRow(command: command),
+                  _CommandRow(
+                    command: command,
+                    onRetry:
+                        _busyAction == null &&
+                            command.status == RemoteCommandStatus.failed
+                        ? () => _retryRemoteCommand(command)
+                        : null,
+                  ),
                   if (command != commandItems.last) const SizedBox(height: 12),
                 ],
+              ] else ...[
+                const SizedBox(height: 18),
+                Text(
+                  'No remote commands have been issued for this device yet.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
               ],
             ],
           ),
@@ -395,7 +417,6 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required RemoteCommandType commandType,
     required String successMessage,
-    required String resultMessage,
     String? message,
   }) {
     return _runAction(
@@ -403,15 +424,30 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       action: () async {
         await ref
             .read(remoteActionsControllerProvider)
-            .queueAndComplete(
+            .queueCommand(
               deviceId: widget.deviceId,
               commandType: commandType,
               message: message,
-              resultMessage: resultMessage,
             );
         return null;
       },
       successMessage: successMessage,
+    );
+  }
+
+  Future<void> _retryRemoteCommand(RemoteCommandRecord command) {
+    return _runAction(
+      label: 'retry ${command.commandId}',
+      action: () async {
+        await ref
+            .read(remoteActionsControllerProvider)
+            .retryCommand(
+              deviceId: widget.deviceId,
+              commandId: command.commandId,
+            );
+        return null;
+      },
+      successMessage: 'Remote command requeued.',
     );
   }
 
@@ -454,8 +490,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       label: 'recovery message',
       commandType: RemoteCommandType.showRecoveryMessage,
       message: message,
-      successMessage: 'Recovery message displayed.',
-      resultMessage: message,
+      successMessage: 'Recovery message queued.',
     );
   }
 
@@ -558,13 +593,17 @@ class _ActionLabel extends StatelessWidget {
 }
 
 class _CommandRow extends StatelessWidget {
-  const _CommandRow({required this.command});
+  const _CommandRow({required this.command, this.onRetry});
 
   final RemoteCommandRecord command;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final formatter = DateFormat('MMM d, HH:mm');
+    final expiresLabel = command.status == RemoteCommandStatus.failed
+        ? command.failureCode ?? 'DELIVERY_FAILURE'
+        : 'Expires ${formatter.format(command.expiresAt)}';
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -599,9 +638,27 @@ class _CommandRow extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            formatter.format(command.completedAt ?? command.queuedAt),
+            'Attempts ${command.attemptCount} • $expiresLabel',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+          const SizedBox(height: 6),
+          Text(
+            formatter.format(
+              command.completedAt ?? command.deliveredAt ?? command.queuedAt,
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ),
+          ],
         ],
       ),
     );

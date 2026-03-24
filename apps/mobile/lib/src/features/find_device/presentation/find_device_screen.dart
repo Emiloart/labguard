@@ -293,12 +293,11 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
     await _runBusy('ring alarm', () async {
       await ref
           .read(remoteActionsControllerProvider)
-          .queueAndComplete(
+          .queueCommand(
             deviceId: widget.deviceId,
             commandType: RemoteCommandType.ringAlarm,
-            resultMessage: 'Alarm request delivered to the device.',
           );
-    }, 'Alarm command completed.');
+    }, 'Alarm command queued.');
   }
 
   Future<void> _runBusy(

@@ -54,9 +54,13 @@ class RemoteCommandRecord {
     required this.commandType,
     required this.status,
     required this.queuedAt,
+    required this.expiresAt,
+    required this.attemptCount,
+    this.deliveredAt,
     this.completedAt,
     this.message,
     this.resultMessage,
+    this.failureCode,
   });
 
   factory RemoteCommandRecord.fromJson(Map<String, dynamic> json) {
@@ -72,9 +76,15 @@ class RemoteCommandRecord {
       queuedAt:
           DateTime.tryParse(json['queuedAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
+      expiresAt:
+          DateTime.tryParse(json['expiresAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      attemptCount: json['attemptCount'] as int? ?? 1,
+      deliveredAt: DateTime.tryParse(json['deliveredAt'] as String? ?? ''),
       completedAt: DateTime.tryParse(json['completedAt'] as String? ?? ''),
       message: json['message'] as String?,
       resultMessage: json['resultMessage'] as String?,
+      failureCode: json['failureCode'] as String?,
     );
   }
 
@@ -83,7 +93,15 @@ class RemoteCommandRecord {
   final RemoteCommandType commandType;
   final RemoteCommandStatus status;
   final DateTime queuedAt;
+  final DateTime expiresAt;
+  final int attemptCount;
+  final DateTime? deliveredAt;
   final DateTime? completedAt;
   final String? message;
   final String? resultMessage;
+  final String? failureCode;
+
+  bool get isPending =>
+      status == RemoteCommandStatus.queued ||
+      status == RemoteCommandStatus.delivered;
 }

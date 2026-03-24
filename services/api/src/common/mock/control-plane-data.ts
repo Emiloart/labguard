@@ -123,9 +123,13 @@ type RemoteCommandRecord = {
   commandType: RemoteCommandType;
   status: RemoteCommandStatus;
   queuedAt: string;
+  deliveredAt?: string;
   completedAt?: string;
+  expiresAt: string;
+  attemptCount: number;
   message?: string;
   resultMessage?: string;
+  failureCode?: string;
 };
 
 type AuditLogOutcome = 'SUCCESS' | 'FAILURE';
@@ -332,7 +336,10 @@ let remoteCommands: RemoteCommandRecord[] = [
     status: 'SUCCEEDED',
     commandType: 'SHOW_RECOVERY_MESSAGE',
     queuedAt: isoAgo({ minutes: 18 }),
+    deliveredAt: isoAgo({ minutes: 17 }),
     completedAt: isoAgo({ minutes: 17 }),
+    expiresAt: isoAgo({ minutes: 8 }),
+    attemptCount: 1,
     message: 'LabGuard owner is attempting recovery. Call +212 555 0147.',
     resultMessage: 'Recovery message displayed on lock screen.',
   },
@@ -342,6 +349,8 @@ let remoteCommands: RemoteCommandRecord[] = [
     status: 'QUEUED',
     commandType: 'RING_ALARM',
     queuedAt: isoAgo({ minutes: 4 }),
+    expiresAt: isoAgo({ minutes: 6 }),
+    attemptCount: 1,
   },
 ];
 
@@ -728,6 +737,10 @@ function issueSessionTokens() {
   return sessionTokens;
 }
 
+function expiresAtIso(minutes = 10) {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
 function findDeviceSeed(deviceId: string) {
   return deviceSeeds.find((device) => device.id == deviceId) ?? null;
 }
@@ -802,6 +815,40 @@ function addSecurityEvent({
     occurredAt: nowIso(),
     ...(deviceId == null ? {} : { deviceName: findDeviceName(deviceId) }),
   });
+}
+
+function expireStaleRemoteCommands() {
+  const currentIso = nowIso();
+
+  for (const command of remoteCommands) {
+    if (
+      (command.status != 'QUEUED' && command.status != 'DELIVERED') ||
+      command.expiresAt.localeCompare(currentIso) >= 0
+    ) {
+      continue;
+    }
+
+    command.status = 'FAILED';
+    command.completedAt = currentIso;
+    command.failureCode = 'DELIVERY_TIMEOUT';
+    command.resultMessage =
+      'Delivery deadline expired before the device confirmed completion.';
+
+    addSecurityEvent({
+      type: 'REMOTE_COMMAND_FAILED',
+      severity: 'WARNING',
+      title: `${command.commandType.replaceAll('_', ' ')} timed out`,
+      summary: command.resultMessage,
+      deviceId: command.deviceId,
+    });
+    addAuditLog({
+      action: 'REMOTE_COMMAND_EXPIRED',
+      targetType: 'REMOTE_COMMAND',
+      targetId: command.commandId,
+      outcome: 'FAILURE',
+      summary: `${command.commandType} expired before the device reported completion.`,
+    });
+  }
 }
 
 function buildSecurityHistory(deviceId: string): SecurityHistoryEntry[] {
@@ -1536,6 +1583,8 @@ export function recordDeviceLocation(
 }
 
 export function listRemoteCommands(deviceId: string) {
+  expireStaleRemoteCommands();
+
   return remoteCommands
     .filter((command) => command.deviceId == deviceId)
     .sort((left, right) =>
@@ -1561,6 +1610,8 @@ export function queueRemoteCommand({
     commandType,
     status: 'QUEUED',
     queuedAt: nowIso(),
+    expiresAt: expiresAtIso(),
+    attemptCount: 1,
     ...(message == null ? {} : { message }),
   };
   remoteCommands = [command, ...remoteCommands];
@@ -1585,9 +1636,47 @@ export function queueRemoteCommand({
   return command;
 }
 
+export function retryRemoteCommand(commandId: string) {
+  const command = remoteCommands.find((entry) => entry.commandId == commandId);
+
+  if (!command) {
+    throw new Error(`Unknown command: ${commandId}`);
+  }
+
+  command.status = 'QUEUED';
+  command.queuedAt = nowIso();
+  delete command.deliveredAt;
+  delete command.completedAt;
+  command.expiresAt = expiresAtIso();
+  delete command.resultMessage;
+  delete command.failureCode;
+  command.attemptCount += 1;
+
+  addSecurityEvent({
+    type: 'REMOTE_COMMAND_RETRIED',
+    severity: 'INFO',
+    title: `${command.commandType.replaceAll('_', ' ')} retried`,
+    summary: 'The control plane requeued the remote action for delivery.',
+    deviceId: command.deviceId,
+  });
+  addAuditLog({
+    action: 'REMOTE_COMMAND_RETRIED',
+    targetType: 'REMOTE_COMMAND',
+    targetId: command.commandId,
+    summary: `${command.commandType} was requeued for another delivery attempt.`,
+  });
+
+  return command;
+}
+
 export function reportRemoteCommandResult(
   commandId: string,
-  patch: Partial<Pick<RemoteCommandRecord, 'status' | 'resultMessage'>>,
+  patch: Partial<
+    Pick<
+      RemoteCommandRecord,
+      'status' | 'resultMessage' | 'failureCode'
+    >
+  >,
 ) {
   const command = remoteCommands.find((entry) => entry.commandId == commandId);
 
@@ -1595,8 +1684,39 @@ export function reportRemoteCommandResult(
     throw new Error(`Unknown command: ${commandId}`);
   }
 
-  command.status = patch.status ?? 'SUCCEEDED';
+  const nextStatus = patch.status ?? 'SUCCEEDED';
+
+  if (nextStatus == 'DELIVERED') {
+    command.status = 'DELIVERED';
+    command.deliveredAt = nowIso();
+    command.resultMessage =
+      patch.resultMessage ?? 'The device acknowledged command delivery.';
+
+    addSecurityEvent({
+      type: 'REMOTE_COMMAND_DELIVERED',
+      severity: 'INFO',
+      title: `${command.commandType.replaceAll('_', ' ')} delivered`,
+      summary: command.resultMessage,
+      deviceId: command.deviceId,
+    });
+    addAuditLog({
+      action: 'REMOTE_COMMAND_DELIVERED',
+      targetType: 'REMOTE_COMMAND',
+      targetId: command.commandId,
+      summary: `${command.commandType} was delivered to the device.`,
+    });
+
+    return command;
+  }
+
+  command.status = nextStatus;
+  command.deliveredAt ??= nowIso();
   command.completedAt = nowIso();
+  if (patch.failureCode == null) {
+    delete command.failureCode;
+  } else {
+    command.failureCode = patch.failureCode;
+  }
   command.resultMessage =
     patch.resultMessage ?? 'Remote action acknowledged by the device.';
 

@@ -68,10 +68,24 @@ class RemoteActionsRepository {
     }
   }
 
+  Future<RemoteCommandRecord> retryCommand(String commandId) async {
+    try {
+      final response = await _client.post<Map<String, dynamic>>(
+        '/v1/remote-actions/$commandId/retry',
+      );
+
+      return RemoteCommandRecord.fromJson(response.data ?? const {});
+    } on DioException catch (error) {
+      throw ApiException(error.message ?? 'Unable to retry the remote action.');
+    }
+  }
+
   Future<RemoteCommandRecord> reportResult({
     required String commandId,
     RemoteCommandStatus status = RemoteCommandStatus.succeeded,
     String? resultMessage,
+    String? failureCode,
+    String? bearerToken,
   }) async {
     try {
       final response = await _client.post<Map<String, dynamic>>(
@@ -80,7 +94,15 @@ class RemoteActionsRepository {
           'status': _commandStatusToWire(status),
           if (resultMessage != null && resultMessage.isNotEmpty)
             'resultMessage': resultMessage,
+          if (failureCode != null && failureCode.isNotEmpty)
+            'failureCode': failureCode,
         },
+        options: Options(
+          extra: {if (bearerToken != null) 'skipAuth': true, 'skipRetry': true},
+          headers: {
+            if (bearerToken != null) 'Authorization': 'Bearer $bearerToken',
+          },
+        ),
       );
 
       return RemoteCommandRecord.fromJson(response.data ?? const {});
@@ -131,32 +153,55 @@ class RemoteActionsController {
 
   final Ref _ref;
 
-  Future<RemoteCommandRecord> queueAndComplete({
+  Future<RemoteCommandRecord> queueCommand({
     required String deviceId,
     required RemoteCommandType commandType,
     String? message,
-    String? resultMessage,
   }) async {
-    final queued = await _ref
+    final command = await _ref
         .read(remoteActionsRepositoryProvider)
         .queueCommand(
           deviceId: deviceId,
           commandType: commandType,
           message: message,
         );
-    final completed = await _ref
+
+    _invalidateState(deviceId);
+    return command;
+  }
+
+  Future<RemoteCommandRecord> retryCommand({
+    required String deviceId,
+    required String commandId,
+  }) async {
+    final command = await _ref
+        .read(remoteActionsRepositoryProvider)
+        .retryCommand(commandId);
+
+    _invalidateState(deviceId);
+    return command;
+  }
+
+  Future<RemoteCommandRecord> reportCommandResult({
+    required String deviceId,
+    required String commandId,
+    required RemoteCommandStatus status,
+    String? resultMessage,
+    String? failureCode,
+    String? bearerToken,
+  }) async {
+    final command = await _ref
         .read(remoteActionsRepositoryProvider)
         .reportResult(
-          commandId: queued.commandId,
-          status: RemoteCommandStatus.succeeded,
-          resultMessage:
-              resultMessage ??
-              message ??
-              'Remote action acknowledged by the device.',
+          commandId: commandId,
+          status: status,
+          resultMessage: resultMessage,
+          failureCode: failureCode,
+          bearerToken: bearerToken,
         );
 
     _invalidateState(deviceId);
-    return completed;
+    return command;
   }
 
   void _invalidateState(String deviceId) {

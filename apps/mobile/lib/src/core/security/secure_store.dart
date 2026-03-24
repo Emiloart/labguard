@@ -12,6 +12,8 @@ abstract interface class SecureStore {
   Future<String?> read(String key);
 
   Future<void> delete(String key);
+
+  Future<void> deleteAll();
 }
 
 class FlutterSecureStoreAdapter implements SecureStore {
@@ -35,6 +37,15 @@ class FlutterSecureStoreAdapter implements SecureStore {
       return await _storage.read(key: key);
     } on MissingPluginException {
       return _fallbackStore[key];
+    }
+  }
+
+  @override
+  Future<void> deleteAll() async {
+    try {
+      await _storage.deleteAll();
+    } on MissingPluginException {
+      _fallbackStore.clear();
     }
   }
 

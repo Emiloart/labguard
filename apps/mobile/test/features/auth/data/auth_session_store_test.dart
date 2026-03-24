@@ -85,6 +85,11 @@ class _FakeSecureStore implements SecureStore {
   }
 
   @override
+  Future<void> deleteAll() async {
+    _storage.clear();
+  }
+
+  @override
   Future<String?> read(String key) async => _storage[key];
 
   @override

@@ -116,18 +116,17 @@ class AuthController extends Notifier<AuthSessionState> {
   }
 
   Future<void> _handleExternalSessionInvalidation() async {
-    final storedSession = await ref
-        .read(authSessionStoreProvider)
-        .readSession();
+    final bootstrap = await ref.read(authRepositoryProvider).bootstrap();
 
-    if (storedSession != null || state.stage == AuthStage.signedOut) {
+    if (bootstrap.session != null || state.stage == bootstrap.stage) {
       return;
     }
 
     _invalidateAppData();
     state = state.copyWith(
-      stage: AuthStage.signedOut,
-      clearSession: true,
+      stage: bootstrap.stage,
+      session: bootstrap.session,
+      clearSession: bootstrap.session == null,
       isBusy: false,
       clearError: true,
     );

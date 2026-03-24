@@ -7,6 +7,7 @@ import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../remote_actions/data/recovery_signal_store.dart';
 import '../application/dashboard_controller.dart';
 import '../domain/dashboard_summary.dart';
 
@@ -16,9 +17,13 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final summary = ref.watch(dashboardSummaryProvider);
+    final recoverySignal = ref.watch(recoverySignalProvider);
 
     return summary.when(
-      data: (data) => _DashboardContent(summary: data),
+      data: (data) => _DashboardContent(
+        summary: data,
+        recoverySignal: recoverySignal.valueOrNull,
+      ),
       loading: () => ListView(
         padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
         children: const [
@@ -42,18 +47,64 @@ class DashboardScreen extends ConsumerWidget {
   }
 }
 
-class _DashboardContent extends StatelessWidget {
-  const _DashboardContent({required this.summary});
+class _DashboardContent extends ConsumerWidget {
+  const _DashboardContent({
+    required this.summary,
+    required this.recoverySignal,
+  });
 
   final DashboardSummary summary;
+  final RecoverySignal? recoverySignal;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
       children: [
         const BrandLockup(compact: true, showAttribution: false),
         const SizedBox(height: 20),
+        if (recoverySignal != null) ...[
+          AppPanel(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.campaign_outlined,
+                  color: LabGuardColors.warning,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        recoverySignal!.alarmRequested
+                            ? 'Recovery alarm active'
+                            : 'Recovery message received',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        recoverySignal!.message,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await ref.read(recoverySignalStoreProvider).clear();
+                    ref
+                        .read(recoverySignalInvalidationProvider.notifier)
+                        .state++;
+                  },
+                  child: const Text('Dismiss'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         if (summary.criticalAlertsCount > 0) ...[
           AppPanel(
             child: Row(

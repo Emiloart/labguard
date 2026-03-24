@@ -57,9 +57,11 @@ export const remoteActionsRoutes: FastifyPluginAsync = async (app) => {
     const params = request.params as { commandId: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
     const rawStatus = body['status'];
-    const status: 'SUCCEEDED' | 'FAILED' | undefined =
-      rawStatus == 'SUCCEEDED' || rawStatus == 'FAILED'
-        ? (rawStatus as 'SUCCEEDED' | 'FAILED')
+    const status: 'DELIVERED' | 'SUCCEEDED' | 'FAILED' | undefined =
+      rawStatus == 'DELIVERED' ||
+      rawStatus == 'SUCCEEDED' ||
+      rawStatus == 'FAILED'
+        ? (rawStatus as 'DELIVERED' | 'SUCCEEDED' | 'FAILED')
         : undefined;
 
     const payload = {
@@ -67,8 +69,16 @@ export const remoteActionsRoutes: FastifyPluginAsync = async (app) => {
       ...(typeof body['resultMessage'] == 'string'
         ? { resultMessage: body['resultMessage'] }
         : {}),
+      ...(typeof body['failureCode'] == 'string'
+        ? { failureCode: body['failureCode'] }
+        : {}),
     };
 
     return remoteActionsService.reportResult(params.commandId, payload);
+  });
+
+  app.post('/:commandId/retry', async (request) => {
+    const params = request.params as { commandId: string };
+    return remoteActionsService.retryCommand(params.commandId);
   });
 };
