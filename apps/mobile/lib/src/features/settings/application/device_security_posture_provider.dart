@@ -32,6 +32,14 @@ class DeviceSecurityPostureRepository {
     return _bridge.getSecurityPosture();
   }
 
+  Future<DeviceSecurityPosture> requestNotificationPermission() {
+    return _bridge.requestNotificationPermission();
+  }
+
+  Future<DeviceSecurityPosture> requestLocationPermission() {
+    return _bridge.requestLocationPermission();
+  }
+
   Future<void> openNotificationSettings() {
     return _bridge.openNotificationSettings();
   }
@@ -54,6 +62,22 @@ class DeviceSecurityPostureController {
     await _ref
         .read(deviceSecurityPostureRepositoryProvider)
         .openNotificationSettings();
+  }
+
+  Future<DeviceSecurityPosture> requestNotificationPermission() async {
+    final posture = await _ref
+        .read(deviceSecurityPostureRepositoryProvider)
+        .requestNotificationPermission();
+    refresh();
+    return posture;
+  }
+
+  Future<DeviceSecurityPosture> requestLocationPermission() async {
+    final posture = await _ref
+        .read(deviceSecurityPostureRepositoryProvider)
+        .requestLocationPermission();
+    refresh();
+    return posture;
   }
 
   Future<void> openBatteryOptimizationSettings() async {

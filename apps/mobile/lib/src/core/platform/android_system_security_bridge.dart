@@ -14,10 +14,20 @@ class AndroidSystemSecurityBridge {
   );
 
   Future<DeviceSecurityPosture> getSecurityPosture() async {
+    return _requestPosture('getSecurityPosture');
+  }
+
+  Future<DeviceSecurityPosture> requestNotificationPermission() async {
+    return _requestPosture('requestNotificationPermission');
+  }
+
+  Future<DeviceSecurityPosture> requestLocationPermission() async {
+    return _requestPosture('requestLocationPermission');
+  }
+
+  Future<DeviceSecurityPosture> _requestPosture(String method) async {
     try {
-      final values = await _channel.invokeMapMethod<String, dynamic>(
-        'getSecurityPosture',
-      );
+      final values = await _channel.invokeMapMethod<String, dynamic>(method);
       return DeviceSecurityPosture.fromJson(values ?? const {});
     } on MissingPluginException {
       return const DeviceSecurityPosture.unsupported();

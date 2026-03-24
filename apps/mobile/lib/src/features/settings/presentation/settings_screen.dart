@@ -52,6 +52,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
         .openApplicationSettings();
   }
 
+  Future<void> _requestNotificationPermission() async {
+    await ref
+        .read(deviceSecurityPostureControllerProvider)
+        .requestNotificationPermission();
+  }
+
+  Future<void> _requestLocationPermission(
+    SecurityPreferences preferences,
+  ) async {
+    final posture = await ref
+        .read(deviceSecurityPostureControllerProvider)
+        .requestLocationPermission();
+    final locationPolicyStatus =
+        posture.locationPermissionStatus == 'granted_precise' ||
+            posture.locationPermissionStatus == 'granted_approximate'
+        ? 'granted_when_in_use'
+        : 'not_requested';
+
+    if (preferences.locationPermissionStatus != locationPolicyStatus) {
+      await ref
+          .read(settingsControllerProvider.notifier)
+          .updatePreferences(
+            (current) => current.copyWith(
+              locationPermissionStatus: locationPolicyStatus,
+            ),
+          );
+    }
+  }
+
   Future<void> _reviewBatteryOptimization(
     SecurityPreferences preferences,
   ) async {
@@ -85,6 +114,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
         posture: posture,
         onSignOut: authController.signOut,
         onRefreshPosture: _refreshPosture,
+        onRequestNotificationPermission: _requestNotificationPermission,
+        onRequestLocationPermission: () =>
+            _requestLocationPermission(data.preferences),
         onOpenNotificationSettings: _openNotificationSettings,
         onOpenApplicationSettings: _openApplicationSettings,
         onReviewBatteryOptimization: () =>
@@ -113,6 +145,8 @@ class _SettingsContent extends ConsumerWidget {
     required this.posture,
     required this.onSignOut,
     required this.onRefreshPosture,
+    required this.onRequestNotificationPermission,
+    required this.onRequestLocationPermission,
     required this.onOpenNotificationSettings,
     required this.onOpenApplicationSettings,
     required this.onReviewBatteryOptimization,
@@ -122,6 +156,8 @@ class _SettingsContent extends ConsumerWidget {
   final AsyncValue<DeviceSecurityPosture> posture;
   final Future<void> Function() onSignOut;
   final VoidCallback onRefreshPosture;
+  final Future<void> Function() onRequestNotificationPermission;
+  final Future<void> Function() onRequestLocationPermission;
   final Future<void> Function() onOpenNotificationSettings;
   final Future<void> Function() onOpenApplicationSettings;
   final Future<void> Function() onReviewBatteryOptimization;
@@ -191,6 +227,8 @@ class _SettingsContent extends ConsumerWidget {
           posture: posture,
           preferences: preferences,
           onRefresh: onRefreshPosture,
+          onRequestNotificationPermission: onRequestNotificationPermission,
+          onRequestLocationPermission: onRequestLocationPermission,
           onOpenNotificationSettings: onOpenNotificationSettings,
           onOpenApplicationSettings: onOpenApplicationSettings,
           onReviewBatteryOptimization: onReviewBatteryOptimization,
@@ -239,6 +277,8 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
     required this.posture,
     required this.preferences,
     required this.onRefresh,
+    required this.onRequestNotificationPermission,
+    required this.onRequestLocationPermission,
     required this.onOpenNotificationSettings,
     required this.onOpenApplicationSettings,
     required this.onReviewBatteryOptimization,
@@ -247,6 +287,8 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
   final AsyncValue<DeviceSecurityPosture> posture;
   final SecurityPreferences preferences;
   final VoidCallback onRefresh;
+  final Future<void> Function() onRequestNotificationPermission;
+  final Future<void> Function() onRequestLocationPermission;
   final Future<void> Function() onOpenNotificationSettings;
   final Future<void> Function() onOpenApplicationSettings;
   final Future<void> Function() onReviewBatteryOptimization;
@@ -378,8 +420,29 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
             children: [
               if (notificationsRequireReview)
                 FilledButton.tonal(
+                  onPressed: posture.postNotificationsRuntimePermissionRequired
+                      ? onRequestNotificationPermission
+                      : onOpenNotificationSettings,
+                  child: Text(
+                    posture.postNotificationsRuntimePermissionRequired
+                        ? 'Request Notifications'
+                        : 'Notification Settings',
+                  ),
+                ),
+              if (notificationsRequireReview &&
+                  posture.postNotificationsRuntimePermissionRequired)
+                FilledButton.tonal(
                   onPressed: onOpenNotificationSettings,
                   child: const Text('Notification Settings'),
+                ),
+              if (locationRequiresReview)
+                FilledButton.tonal(
+                  onPressed: onRequestLocationPermission,
+                  child: Text(
+                    posture.locationPermissionStatus == 'granted_approximate'
+                        ? 'Request Precise Location'
+                        : 'Request Location Access',
+                  ),
                 ),
               if (locationRequiresReview)
                 FilledButton.tonal(

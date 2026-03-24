@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -32,12 +33,27 @@ class LabGuardSystemMethodChannel {
 private class LabGuardSystemMethodCallHandler(
     private val activity: FlutterFragmentActivity,
 ) : MethodChannel.MethodCallHandler {
+    private var notificationPermissionResult: MethodChannel.Result? = null
+    private var locationPermissionResult: MethodChannel.Result? = null
+    private val notificationPermissionLauncher =
+        activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            notificationPermissionResult?.success(buildSecurityPosture())
+            notificationPermissionResult = null
+        }
+    private val locationPermissionLauncher =
+        activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            locationPermissionResult?.success(buildSecurityPosture())
+            locationPermissionResult = null
+        }
+
     override fun onMethodCall(
         call: MethodCall,
         result: MethodChannel.Result,
     ) {
         when (call.method) {
             "getSecurityPosture" -> result.success(buildSecurityPosture())
+            "requestNotificationPermission" -> requestNotificationPermission(result)
+            "requestLocationPermission" -> requestLocationPermission(result)
             "openNotificationSettings" -> {
                 openNotificationSettings()
                 result.success(null)
@@ -55,6 +71,34 @@ private class LabGuardSystemMethodCallHandler(
 
             else -> result.notImplemented()
         }
+    }
+
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (!ensureNoPendingRequest(result)) {
+            return
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(buildSecurityPosture())
+            return
+        }
+
+        notificationPermissionResult = result
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun requestLocationPermission(result: MethodChannel.Result) {
+        if (!ensureNoPendingRequest(result)) {
+            return
+        }
+
+        locationPermissionResult = result
+        locationPermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ),
+        )
     }
 
     private fun buildSecurityPosture(): Map<String, Any> {
@@ -126,5 +170,18 @@ private class LabGuardSystemMethodCallHandler(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
             Uri.fromParts("package", activity.packageName, null),
         )
+    }
+
+    private fun ensureNoPendingRequest(result: MethodChannel.Result): Boolean {
+        if (notificationPermissionResult != null || locationPermissionResult != null) {
+            result.error(
+                "request_in_progress",
+                "Another Android permission request is already pending.",
+                null,
+            )
+            return false
+        }
+
+        return true
     }
 }
