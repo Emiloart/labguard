@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
 import Fastify, { type FastifyError } from 'fastify';
 
+import { requireLabGuardAuth } from './common/auth/request-auth.js';
 import { requestContextPlugin } from './common/plugins/request-context.js';
 import { env } from './config/env.js';
 import { adminRoutes } from './modules/admin/admin.routes.js';
@@ -63,6 +64,8 @@ export async function buildApp() {
   });
 
   await app.register(async (v1) => {
+    v1.addHook('preHandler', requireLabGuardAuth);
+
     await v1.register(healthRoutes, { prefix: '/health' });
     await v1.register(authRoutes, { prefix: '/auth' });
     await v1.register(dashboardRoutes, { prefix: '/dashboard' });

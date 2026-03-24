@@ -1,6 +1,7 @@
 import {
   clearIssuedSession,
   getSessionSnapshot,
+  isRefreshTokenValid,
   issueLoginSession,
   recordAuditLogEntry,
   rotateRefreshSession,
@@ -32,7 +33,11 @@ export class AuthService {
     return issueLoginSession();
   }
 
-  refresh() {
+  refresh(refreshToken?: string) {
+    if (!isRefreshTokenValid(refreshToken)) {
+      throw unauthorized('Refresh token is invalid or expired.');
+    }
+
     const session = rotateRefreshSession();
     recordAuditLogEntry({
       action: 'SESSION_REFRESHED',
@@ -70,3 +75,7 @@ export class AuthService {
 export const authService = new AuthService();
 
 const viewerId = 'user-owner-01';
+
+function unauthorized(message: string) {
+  return Object.assign(new Error(message), { statusCode: 401 });
+}

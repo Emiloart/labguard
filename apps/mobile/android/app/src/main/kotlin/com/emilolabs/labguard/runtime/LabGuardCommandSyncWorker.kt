@@ -3,6 +3,7 @@ package com.emilolabs.labguard.runtime
 import android.app.ActivityManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.emilolabs.labguard.vpn.LabGuardVpnManager
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -15,8 +16,11 @@ class LabGuardCommandSyncWorker(
     params: WorkerParameters,
 ) : Worker(appContext, params) {
     private val secureStateStore = LabGuardSecureStateStore(applicationContext)
-    private val vpnManager = com.emilolabs.labguard.vpn.LabGuardVpnManager.getInstance(applicationContext)
+    private val vpnManager = LabGuardVpnManager.getInstance(applicationContext)
     private val notifier = LabGuardRuntimeNotifier(applicationContext)
+
+    @Volatile
+    private var runtimeSession: LabGuardSecureStateStore.StoredSession? = null
 
     override fun doWork(): Result {
         if (isAppForeground()) {
@@ -28,10 +32,10 @@ class LabGuardCommandSyncWorker(
                 .getString(KEY_API_BASE_URL)
                 ?.trim()
                 ?.trimEnd('/') ?: return Result.success()
-        val session = secureStateStore.readSession() ?: return Result.success()
+        runtimeSession = secureStateStore.readSession() ?: return Result.success()
 
         return try {
-            val commands = fetchCommands(apiBaseUrl, session)
+            val commands = fetchCommands(apiBaseUrl)
 
             for (command in commands) {
                 if (isStopped) {
@@ -41,12 +45,13 @@ class LabGuardCommandSyncWorker(
                     continue
                 }
 
-                val shouldContinue = processCommand(apiBaseUrl, session, command)
+                val shouldContinue = processCommand(apiBaseUrl, command)
                 if (!shouldContinue) {
                     return Result.success()
                 }
             }
 
+            syncVpnHeartbeat(apiBaseUrl)
             Result.success()
         } catch (error: HttpStatusException) {
             if (error.statusCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
@@ -60,18 +65,20 @@ class LabGuardCommandSyncWorker(
             }
         } catch (_: IOException) {
             Result.retry()
+        } finally {
+            runtimeSession = null
         }
     }
 
     private fun processCommand(
         apiBaseUrl: String,
-        session: LabGuardSecureStateStore.StoredSession,
         command: PendingRemoteCommand,
     ): Boolean {
+        val session = runtimeSession ?: return false
+
         if (command.status == STATUS_QUEUED) {
             reportCommandStatus(
                 apiBaseUrl = apiBaseUrl,
-                accessToken = session.accessToken,
                 commandId = command.commandId,
                 status = STATUS_DELIVERED,
                 resultMessage = deliveryMessage(command),
@@ -82,7 +89,6 @@ class LabGuardCommandSyncWorker(
 
         reportCommandStatus(
             apiBaseUrl = apiBaseUrl,
-            accessToken = session.accessToken,
             commandId = command.commandId,
             status = outcome.status,
             resultMessage = outcome.resultMessage,
@@ -106,7 +112,8 @@ class LabGuardCommandSyncWorker(
                 )
                 CommandOutcome(
                     status = STATUS_SUCCEEDED,
-                    resultMessage = "Trusted access and local VPN material were revoked on the device.",
+                    resultMessage =
+                        "Trusted access and local VPN material were revoked on the device.",
                     afterReport = {
                         secureStateStore.clearAuthSession()
                         LabGuardCommandSyncScheduler.disable(applicationContext)
@@ -119,11 +126,13 @@ class LabGuardCommandSyncWorker(
                 vpnManager.clearProfile(applicationContext)
                 notifier.showSecurityAlert(
                     title = "LabGuard VPN revoked",
-                    message = "The local WireGuard profile was removed from ${session.deviceName}.",
+                    message =
+                        "The local WireGuard profile was removed from ${session.deviceName}.",
                 )
                 CommandOutcome(
                     status = STATUS_SUCCEEDED,
-                    resultMessage = "The local WireGuard profile was removed and the tunnel was stopped.",
+                    resultMessage =
+                        "The local WireGuard profile was removed and the tunnel was stopped.",
                 )
             }
 
@@ -135,7 +144,8 @@ class LabGuardCommandSyncWorker(
                 )
                 CommandOutcome(
                     status = STATUS_SUCCEEDED,
-                    resultMessage = "Local session material was invalidated and the device must authenticate again.",
+                    resultMessage =
+                        "Local session material was invalidated and the device must authenticate again.",
                     afterReport = {
                         secureStateStore.clearAuthSession()
                         LabGuardCommandSyncScheduler.disable(applicationContext)
@@ -152,7 +162,8 @@ class LabGuardCommandSyncWorker(
                 )
                 CommandOutcome(
                     status = STATUS_SUCCEEDED,
-                    resultMessage = "LabGuard cleared locally stored session, VPN, and recovery data.",
+                    resultMessage =
+                        "LabGuard cleared locally stored session, VPN, and recovery data.",
                     afterReport = {
                         secureStateStore.clearAll()
                         LabGuardCommandSyncScheduler.disable(applicationContext)
@@ -216,7 +227,8 @@ class LabGuardCommandSyncWorker(
                 )
                 CommandOutcome(
                     status = STATUS_SUCCEEDED,
-                    resultMessage = "Local LabGuard access was disabled and the device must be reapproved.",
+                    resultMessage =
+                        "Local LabGuard access was disabled and the device must be reapproved.",
                     afterReport = {
                         secureStateStore.clearAuthSession()
                         LabGuardCommandSyncScheduler.disable(applicationContext)
@@ -234,15 +246,11 @@ class LabGuardCommandSyncWorker(
         }
     }
 
-    private fun fetchCommands(
-        apiBaseUrl: String,
-        session: LabGuardSecureStateStore.StoredSession,
-    ): List<PendingRemoteCommand> {
+    private fun fetchCommands(apiBaseUrl: String): List<PendingRemoteCommand> {
         val response =
             executeRequest(
                 method = "GET",
-                url = "$apiBaseUrl/v1/remote-actions/${session.deviceId}",
-                accessToken = session.accessToken,
+                url = "$apiBaseUrl/v1/remote-actions/${currentSession().deviceId}",
             )
         val root = if (response.isBlank()) JSONObject() else JSONObject(response)
         val items = root.optJSONArray("items") ?: JSONArray()
@@ -263,9 +271,42 @@ class LabGuardCommandSyncWorker(
         return commands
     }
 
+    private fun syncVpnHeartbeat(apiBaseUrl: String) {
+        val status = vpnManager.getStatus(applicationContext)
+        val profileInstalled = status["profileInstalled"] as? Boolean ?: false
+        val tunnelState = status["tunnelState"] as? String ?: "PROFILE_MISSING"
+        val lastError = status["lastError"] as? String
+
+        if (!profileInstalled && tunnelState == "PROFILE_MISSING" && lastError == null) {
+            return
+        }
+
+        val body =
+            JSONObject()
+                .put("deviceId", currentSession().deviceId)
+                .put("serverId", status["serverId"] as? String ?: "")
+                .put("tunnelState", tunnelState)
+                .put("currentIp", status["currentIp"] as? String ?: "Unavailable")
+                .put("bytesReceived", (status["bytesReceived"] as? Number)?.toLong() ?: 0L)
+                .put("bytesSent", (status["bytesSent"] as? Number)?.toLong() ?: 0L)
+                .apply {
+                    (status["lastHandshakeAt"] as? String)?.let {
+                        put("lastHandshakeAt", it)
+                    }
+                    lastError?.let {
+                        put("lastError", it)
+                    }
+                }
+
+        executeRequest(
+            method = "POST",
+            url = "$apiBaseUrl/v1/vpn/sessions/heartbeat",
+            body = body.toString(),
+        )
+    }
+
     private fun reportCommandStatus(
         apiBaseUrl: String,
-        accessToken: String,
         commandId: String,
         status: String,
         resultMessage: String,
@@ -284,7 +325,6 @@ class LabGuardCommandSyncWorker(
         executeRequest(
             method = "POST",
             url = "$apiBaseUrl/v1/remote-actions/$commandId/result",
-            accessToken = accessToken,
             body = body.toString(),
         )
     }
@@ -293,9 +333,51 @@ class LabGuardCommandSyncWorker(
     private fun executeRequest(
         method: String,
         url: String,
-        accessToken: String,
         body: String? = null,
+        allowRefresh: Boolean = true,
+        includeAuth: Boolean = true,
     ): String {
+        val accessToken = if (includeAuth) currentSession().accessToken else null
+        val (statusCode, response) =
+            performHttpRequest(
+                method = method,
+                url = url,
+                accessToken = accessToken,
+                body = body,
+            )
+
+        if (
+            statusCode == HttpURLConnection.HTTP_UNAUTHORIZED &&
+            includeAuth &&
+            allowRefresh &&
+            refreshSessionFor(url)
+        ) {
+            return executeRequest(
+                method = method,
+                url = url,
+                body = body,
+                allowRefresh = false,
+                includeAuth = includeAuth,
+            )
+        }
+
+        if (statusCode !in 200..299) {
+            throw HttpStatusException(
+                statusCode = statusCode,
+                message = if (response.isBlank()) "HTTP $statusCode" else response,
+            )
+        }
+
+        return response
+    }
+
+    @Throws(IOException::class)
+    private fun performHttpRequest(
+        method: String,
+        url: String,
+        accessToken: String? = null,
+        body: String? = null,
+    ): Pair<Int, String> {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 8_000
@@ -303,7 +385,9 @@ class LabGuardCommandSyncWorker(
             doInput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer $accessToken")
+            if (!accessToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $accessToken")
+            }
         }
 
         try {
@@ -321,17 +405,43 @@ class LabGuardCommandSyncWorker(
                     ?.use { it.readText() }
                     .orEmpty()
 
-            if (statusCode !in 200..299) {
-                throw HttpStatusException(
-                    statusCode = statusCode,
-                    message = if (response.isBlank()) "HTTP $statusCode" else response,
-                )
-            }
-
-            return response
+            return statusCode to response
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun refreshSessionFor(url: String): Boolean {
+        val current = runtimeSession ?: return false
+        val apiBaseUrl = apiBaseUrlFor(url) ?: return false
+        val body = JSONObject().put("refreshToken", current.refreshToken).toString()
+        val (statusCode, response) =
+            performHttpRequest(
+                method = "POST",
+                url = "$apiBaseUrl/v1/auth/refresh",
+                body = body,
+            )
+
+        if (statusCode !in 200..299 || response.isBlank()) {
+            return false
+        }
+
+        val refreshed =
+            LabGuardSecureStateStore.StoredSession.fromEnvelopePayload(
+                JSONObject(response),
+            ) ?: return false
+        secureStateStore.writeSession(refreshed)
+        runtimeSession = refreshed
+        return true
+    }
+
+    private fun apiBaseUrlFor(url: String): String? {
+        val markerIndex = url.indexOf("/v1/")
+        if (markerIndex <= 0) {
+            return null
+        }
+
+        return url.substring(0, markerIndex)
     }
 
     private fun deliveryMessage(command: PendingRemoteCommand): String {
@@ -353,6 +463,14 @@ class LabGuardCommandSyncWorker(
         }
     }
 
+    private fun currentSession(): LabGuardSecureStateStore.StoredSession {
+        return runtimeSession
+            ?: throw HttpStatusException(
+                statusCode = HttpURLConnection.HTTP_UNAUTHORIZED,
+                message = "No active LabGuard session is stored on the device.",
+            )
+    }
+
     data class PendingRemoteCommand(
         val commandId: String,
         val deviceId: String,
@@ -360,9 +478,7 @@ class LabGuardCommandSyncWorker(
         val status: String,
         val message: String?,
     ) {
-        fun isPending(): Boolean =
-            status == LabGuardCommandSyncWorker.STATUS_QUEUED ||
-                status == LabGuardCommandSyncWorker.STATUS_DELIVERED
+        fun isPending(): Boolean = status == STATUS_QUEUED || status == STATUS_DELIVERED
     }
 
     data class CommandOutcome(

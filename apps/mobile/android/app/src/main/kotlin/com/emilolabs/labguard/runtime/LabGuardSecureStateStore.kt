@@ -13,25 +13,15 @@ class LabGuardSecureStateStore(
     fun readSession(): StoredSession? {
         val raw = readRaw(AUTH_SESSION_KEY) ?: return null
         val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return null
-        val device = payload.optJSONObject("device") ?: JSONObject()
-        val account = payload.optJSONObject("account") ?: JSONObject()
-        val viewer = payload.optJSONObject("viewer") ?: JSONObject()
-        val accessToken = payload.optString("accessToken", "")
-        val refreshToken = payload.optString("refreshToken", "")
-        val deviceId = device.optString("id", "")
+        return StoredSession.fromStoredPayload(payload)
+    }
 
-        if (accessToken.isBlank() || refreshToken.isBlank() || deviceId.isBlank()) {
-            return null
-        }
+    fun writeSession(session: StoredSession) {
+        writeRaw(AUTH_SESSION_KEY, session.toStoredPayload().toString())
+    }
 
-        return StoredSession(
-            accessToken = accessToken,
-            refreshToken = refreshToken,
-            deviceId = deviceId,
-            deviceName = device.optString("name", "Unknown device"),
-            accountName = account.optString("name", "Emilo Labs"),
-            viewerLabel = viewer.optString("displayName", "LabGuard User"),
-        )
+    fun clearAuthSession() {
+        deleteRaw(AUTH_SESSION_KEY)
     }
 
     fun readVpnProfile(deviceId: String): StoredVpnProfile? {
@@ -65,10 +55,6 @@ class LabGuardSecureStateStore(
                 .put("note", profile.note)
 
         writeRaw("$VPN_PROFILE_KEY_PREFIX${profile.deviceId}", payload.toString())
-    }
-
-    fun clearAuthSession() {
-        deleteRaw(AUTH_SESSION_KEY)
     }
 
     fun clearVpnProfile(deviceId: String) {
@@ -152,11 +138,108 @@ class LabGuardSecureStateStore(
     data class StoredSession(
         val accessToken: String,
         val refreshToken: String,
+        val expiresInSeconds: Int,
         val deviceId: String,
         val deviceName: String,
+        val deviceTrustState: String,
+        val viewerId: String,
+        val viewerEmail: String,
         val accountName: String,
+        val accountId: String,
+        val brandAttribution: String,
         val viewerLabel: String,
-    )
+        val viewerRole: String,
+    ) {
+        fun toStoredPayload(): JSONObject {
+            return JSONObject()
+                .put("accessToken", accessToken)
+                .put("refreshToken", refreshToken)
+                .put("expiresInSeconds", expiresInSeconds)
+                .put(
+                    "viewer",
+                    JSONObject()
+                        .put("id", viewerId)
+                        .put("email", viewerEmail)
+                        .put("displayName", viewerLabel)
+                        .put("role", viewerRole),
+                ).put(
+                    "account",
+                    JSONObject()
+                        .put("id", accountId)
+                        .put("name", accountName)
+                        .put("brandAttribution", brandAttribution),
+                ).put(
+                    "device",
+                    JSONObject()
+                        .put("id", deviceId)
+                        .put("name", deviceName)
+                        .put("trustState", deviceTrustState),
+                )
+        }
+
+        companion object {
+            fun fromStoredPayload(payload: JSONObject): StoredSession? {
+                val normalized =
+                    if (payload.has("viewer") || payload.has("account") || payload.has("device")) {
+                        payload
+                    } else {
+                        JSONObject()
+                            .put("accessToken", payload.optString("accessToken", ""))
+                            .put("refreshToken", payload.optString("refreshToken", ""))
+                            .put("expiresInSeconds", payload.optInt("expiresInSeconds", 0))
+                            .put("viewer", payload.optJSONObject("viewer") ?: JSONObject())
+                            .put("account", payload.optJSONObject("account") ?: JSONObject())
+                            .put("device", payload.optJSONObject("device") ?: JSONObject())
+                    }
+
+                val device = normalized.optJSONObject("device") ?: JSONObject()
+                val account = normalized.optJSONObject("account") ?: JSONObject()
+                val viewer = normalized.optJSONObject("viewer") ?: JSONObject()
+                val accessToken = normalized.optString("accessToken", "")
+                val refreshToken = normalized.optString("refreshToken", "")
+                val deviceId = device.optString("id", "")
+
+                if (
+                    accessToken.isBlank() ||
+                    refreshToken.isBlank() ||
+                    deviceId.isBlank()
+                ) {
+                    return null
+                }
+
+                return StoredSession(
+                    accessToken = accessToken,
+                    refreshToken = refreshToken,
+                    expiresInSeconds = normalized.optInt("expiresInSeconds", 0),
+                    deviceId = deviceId,
+                    deviceName = device.optString("name", "Unknown device"),
+                    deviceTrustState = device.optString("trustState", "PENDING_APPROVAL"),
+                    viewerId = viewer.optString("id", ""),
+                    viewerEmail = viewer.optString("email", ""),
+                    accountName = account.optString("name", "Emilo Labs"),
+                    accountId = account.optString("id", ""),
+                    brandAttribution =
+                        account.optString("brandAttribution", "Built by Emilo Labs"),
+                    viewerLabel = viewer.optString("displayName", "LabGuard User"),
+                    viewerRole = viewer.optString("role", "MEMBER"),
+                )
+            }
+
+            fun fromEnvelopePayload(payload: JSONObject): StoredSession? {
+                val session = payload.optJSONObject("session") ?: return null
+
+                return fromStoredPayload(
+                    JSONObject()
+                        .put("accessToken", payload.optString("accessToken", ""))
+                        .put("refreshToken", payload.optString("refreshToken", ""))
+                        .put("expiresInSeconds", payload.optInt("expiresInSeconds", 0))
+                        .put("viewer", session.optJSONObject("viewer") ?: JSONObject())
+                        .put("account", session.optJSONObject("account") ?: JSONObject())
+                        .put("device", session.optJSONObject("device") ?: JSONObject()),
+                )
+            }
+        }
+    }
 
     data class StoredVpnProfile(
         val deviceId: String,

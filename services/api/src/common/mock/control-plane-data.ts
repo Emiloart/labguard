@@ -203,6 +203,7 @@ let sessionTokens = {
   accessToken: 'labguard-phase-2-access-token',
   refreshToken: 'labguard-phase-2-refresh-token',
   expiresInSeconds: 900,
+  issuedAt: nowIso(),
 };
 
 const viewer: ViewerProfile = {
@@ -732,6 +733,7 @@ function issueSessionTokens() {
     accessToken: `labguard-access-${randomBytes(12).toString('hex')}`,
     refreshToken: `labguard-refresh-${randomBytes(12).toString('hex')}`,
     expiresInSeconds: 900,
+    issuedAt: nowIso(),
   };
 
   return sessionTokens;
@@ -970,7 +972,34 @@ export function clearIssuedSession() {
     accessToken: '',
     refreshToken: '',
     expiresInSeconds: 0,
+    issuedAt: nowIso(),
   };
+}
+
+export function isAccessTokenValid(accessToken?: string) {
+  if (
+    accessToken == null ||
+    accessToken.trim().length == 0 ||
+    accessToken != sessionTokens.accessToken ||
+    sessionTokens.accessToken.trim().length == 0
+  ) {
+    return false;
+  }
+
+  const issuedAt = Date.parse(sessionTokens.issuedAt);
+  if (Number.isNaN(issuedAt)) {
+    return false;
+  }
+
+  return Date.now() < issuedAt + sessionTokens.expiresInSeconds * 1000;
+}
+
+export function isRefreshTokenValid(refreshToken?: string) {
+  return (
+    refreshToken != null &&
+    refreshToken == sessionTokens.refreshToken &&
+    sessionTokens.refreshToken.length > 0
+  );
 }
 
 export function getSessionSnapshot() {

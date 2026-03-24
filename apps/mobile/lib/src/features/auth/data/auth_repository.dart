@@ -111,10 +111,18 @@ class AuthRepository {
   }
 
   Future<void> logout() async {
+    final storedSession = await _sessionStore.readSession();
+
     try {
       await _client.post<void>(
         '/v1/auth/logout',
-        options: Options(extra: const {'skipAuth': true}),
+        options: Options(
+          extra: const {'skipAuth': true, 'skipRetry': true},
+          headers: {
+            if (storedSession != null && storedSession.accessToken.isNotEmpty)
+              'Authorization': 'Bearer ${storedSession.accessToken}',
+          },
+        ),
       );
     } on DioException {
       // Local session clearing still takes priority.

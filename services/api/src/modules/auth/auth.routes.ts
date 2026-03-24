@@ -11,8 +11,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return authService.login();
   });
 
-  app.post('/refresh', async () => {
-    return authService.refresh();
+  app.post('/refresh', async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    return authService.refresh(
+      typeof body['refreshToken'] == 'string' ? body['refreshToken'] : undefined,
+    );
   });
 
   app.get('/session', async () => {
