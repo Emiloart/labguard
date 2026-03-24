@@ -33,6 +33,10 @@ android {
     }
 }
 
+dependencies {
+    implementation("com.wireguard.android:tunnel:1.0.20260102")
+}
+
 flutter {
     source = "../.."
 }

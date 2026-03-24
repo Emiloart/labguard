@@ -1,6 +1,12 @@
 import {
   getVpnProfileSummary,
+  getVpnSessionSnapshot,
   getVpnServers,
+  recordVpnHeartbeat,
+  recordVpnSessionConnect,
+  recordVpnSessionDisconnect,
+  revokeVpnProfile,
+  rotateVpnProfile,
 } from '../../common/mock/control-plane-data.js';
 
 export class VpnService {
@@ -12,25 +18,41 @@ export class VpnService {
     return getVpnProfileSummary(deviceId);
   }
 
+  getSession(deviceId: string) {
+    return getVpnSessionSnapshot(deviceId);
+  }
+
   rotateProfile(deviceId: string) {
-    return {
-      deviceId,
-      rotatedAt: new Date().toISOString(),
-    };
+    return rotateVpnProfile(deviceId);
   }
 
   revokeProfile(deviceId: string) {
-    return {
-      deviceId,
-      revokedAt: new Date().toISOString(),
-    };
+    return revokeVpnProfile(deviceId);
   }
 
-  recordHeartbeat() {
-    return {
-      accepted: true,
-      syncedAt: new Date().toISOString(),
-    };
+  connectSession(payload: {
+    deviceId?: string;
+    serverId?: string;
+    currentIp?: string;
+  }) {
+    return recordVpnSessionConnect(payload);
+  }
+
+  disconnectSession(payload: { deviceId?: string; reason?: string }) {
+    return recordVpnSessionDisconnect(payload);
+  }
+
+  recordHeartbeat(payload: {
+    deviceId?: string;
+    serverId?: string;
+    tunnelState?: string;
+    currentIp?: string;
+    bytesReceived?: number;
+    bytesSent?: number;
+    lastHandshakeAt?: string;
+    lastError?: string;
+  }) {
+    return recordVpnHeartbeat(payload);
   }
 }
 

@@ -1,20 +1,20 @@
 package com.emilolabs.labguard.vpn
 
-import android.content.Context
+import android.app.Activity
+import android.net.VpnService
+import androidx.activity.result.contract.ActivityResultContracts
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
-class LabGuardVpnMethodChannel : MethodChannel.MethodCallHandler {
-    fun attach(binaryMessenger: BinaryMessenger, context: Context) {
-        val applicationContext = context.applicationContext
+class LabGuardVpnMethodChannel {
+    fun attach(binaryMessenger: BinaryMessenger, activity: FlutterFragmentActivity) {
         MethodChannel(binaryMessenger, CHANNEL_NAME).setMethodCallHandler(
-            LabGuardVpnMethodCallHandler(applicationContext),
+            LabGuardVpnMethodCallHandler(activity),
         )
-    }
-
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        result.notImplemented()
     }
 
     companion object {
@@ -23,32 +23,120 @@ class LabGuardVpnMethodChannel : MethodChannel.MethodCallHandler {
 }
 
 private class LabGuardVpnMethodCallHandler(
-    private val applicationContext: Context,
+    private val activity: FlutterFragmentActivity,
 ) : MethodChannel.MethodCallHandler {
+    private val manager = LabGuardVpnManager.getInstance(activity.applicationContext)
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var pendingPrepareResult: MethodChannel.Result? = null
+    private val permissionLauncher =
+        activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val pendingResult = pendingPrepareResult ?: return@registerForActivityResult
+            pendingPrepareResult = null
+            val payload = manager.getPlatformCapabilities(activity)
+
+            if (result.resultCode == Activity.RESULT_OK) {
+                pendingResult.success(payload)
+            } else {
+                pendingResult.success(
+                    payload + mapOf("notes" to "Android VPN permission was not granted."),
+                )
+            }
+        }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "getPlatformCapabilities" -> {
-                result.success(
-                    mapOf(
-                        "platform" to "android",
-                        "vpnServicePrepared" to false,
-                        "wireGuardBackendIntegrated" to false,
-                        "packageName" to applicationContext.packageName,
-                        "notes" to "Phase 1 placeholder. WireGuard and VpnService integration lands in Phase 3.",
-                    ),
-                )
+            "getPlatformCapabilities" -> result.success(
+                manager.getPlatformCapabilities(activity),
+            )
+
+            "getStatus" -> runAsync(result) {
+                manager.getStatus(activity)
             }
 
             "prepareVpn" -> {
-                result.success(
-                    mapOf(
-                        "status" to "planned",
-                        "message" to "Native VPN preparation bridge scaffolded. No tunnel lifecycle is active yet.",
-                    ),
-                )
+                if (pendingPrepareResult != null) {
+                    result.error(
+                        "vpn_prepare_in_progress",
+                        "A VPN preparation request is already pending.",
+                        null,
+                    )
+                    return
+                }
+
+                val prepareIntent = VpnService.prepare(activity)
+                if (prepareIntent == null) {
+                    result.success(manager.getPlatformCapabilities(activity))
+                    return
+                }
+
+                pendingPrepareResult = result
+                permissionLauncher.launch(prepareIntent)
+            }
+
+            "installProfile" -> {
+                val tunnelName = call.argument<String>("tunnelName")
+                val serverId = call.argument<String>("serverId")
+                val revision = call.argument<Int>("revision")
+                val config = call.argument<String>("config")
+
+                if (tunnelName.isNullOrBlank() ||
+                    serverId.isNullOrBlank() ||
+                    revision == null ||
+                    config.isNullOrBlank()
+                ) {
+                    result.error(
+                        "vpn_invalid_profile",
+                        "Tunnel installation requires tunnelName, serverId, revision, and config.",
+                        null,
+                    )
+                    return
+                }
+
+                runAsync(result) {
+                    manager.installProfile(
+                        tunnelName = tunnelName,
+                        serverId = serverId,
+                        revision = revision,
+                        configText = config,
+                    )
+                }
+            }
+
+            "connect" -> runAsync(result) {
+                manager.connect(activity)
+            }
+
+            "disconnect" -> runAsync(result) {
+                manager.disconnect(activity)
+            }
+
+            "clearProfile" -> runAsync(result) {
+                manager.clearProfile(activity)
             }
 
             else -> result.notImplemented()
+        }
+    }
+
+    private fun runAsync(
+        result: MethodChannel.Result,
+        block: () -> Map<String, Any?>,
+    ) {
+        executor.execute {
+            try {
+                val payload = block()
+                activity.runOnUiThread {
+                    result.success(payload)
+                }
+            } catch (error: Exception) {
+                activity.runOnUiThread {
+                    result.error(
+                        "vpn_bridge_failure",
+                        error.message ?: "Unexpected VPN bridge failure.",
+                        null,
+                    )
+                }
+            }
         }
     }
 }
