@@ -1,39 +1,41 @@
+import {
+  listRemoteCommands,
+  queueRemoteCommand,
+  reportRemoteCommandResult,
+} from '../../common/mock/control-plane-data.js';
+
 export class RemoteActionsService {
-  queueCommand(deviceId: string) {
-    return {
-      commandId: 'cmd-01',
+  queueCommand(
+    deviceId: string,
+    payload: Partial<{
+      commandType:
+        | 'SIGN_OUT'
+        | 'REVOKE_VPN'
+        | 'ROTATE_SESSION'
+        | 'WIPE_APP_DATA'
+        | 'RING_ALARM'
+        | 'SHOW_RECOVERY_MESSAGE'
+        | 'MARK_RECOVERED'
+        | 'DISABLE_DEVICE_ACCESS';
+      message: string;
+    }>,
+  ) {
+    return queueRemoteCommand({
       deviceId,
-      status: 'QUEUED',
-      commandType: 'RING_ALARM',
-      queuedAt: new Date().toISOString(),
-    };
+      commandType: payload.commandType ?? 'RING_ALARM',
+      ...(payload.message == null ? {} : { message: payload.message }),
+    });
   }
 
   listCommands(deviceId: string) {
-    return [
-      {
-        commandId: 'cmd-01',
-        deviceId,
-        status: 'SUCCEEDED',
-        commandType: 'SHOW_RECOVERY_MESSAGE',
-        completedAt: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
-      },
-      {
-        commandId: 'cmd-02',
-        deviceId,
-        status: 'QUEUED',
-        commandType: 'RING_ALARM',
-        queuedAt: new Date().toISOString(),
-      },
-    ];
+    return listRemoteCommands(deviceId);
   }
 
-  reportResult(commandId: string) {
-    return {
-      commandId,
-      accepted: true,
-      recordedAt: new Date().toISOString(),
-    };
+  reportResult(
+    commandId: string,
+    payload: Partial<{ status: 'SUCCEEDED' | 'FAILED'; resultMessage: string }>,
+  ) {
+    return reportRemoteCommandResult(commandId, payload);
   }
 }
 

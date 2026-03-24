@@ -17,6 +17,12 @@ final securityEventsProvider = FutureProvider<List<SecurityEventRecord>>((
   return ref.watch(securityEventsRepositoryProvider).fetchEvents();
 });
 
+final securityEventsControllerProvider = Provider<SecurityEventsController>((
+  ref,
+) {
+  return SecurityEventsController(ref);
+});
+
 class SecurityEventsRepository {
   SecurityEventsRepository({required Dio client}) : _client = client;
 
@@ -38,5 +44,28 @@ class SecurityEventsRepository {
         error.message ?? 'Unable to load LabGuard security events.',
       );
     }
+  }
+
+  Future<void> markRead(String eventId) async {
+    try {
+      await _client.post<Map<String, dynamic>>(
+        '/v1/security-events/$eventId/read',
+      );
+    } on DioException catch (error) {
+      throw ApiException(
+        error.message ?? 'Unable to mark the security event as read.',
+      );
+    }
+  }
+}
+
+class SecurityEventsController {
+  SecurityEventsController(this._ref);
+
+  final Ref _ref;
+
+  Future<void> markRead(String eventId) async {
+    await _ref.read(securityEventsRepositoryProvider).markRead(eventId);
+    _ref.invalidate(securityEventsProvider);
   }
 }

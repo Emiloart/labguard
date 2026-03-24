@@ -9,18 +9,27 @@ import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../devices/application/device_registry_provider.dart';
 import '../../devices/domain/device_record.dart';
+import '../../remote_actions/application/remote_actions_provider.dart';
+import '../../remote_actions/domain/remote_command_record.dart';
 
-class FindDeviceScreen extends ConsumerWidget {
+class FindDeviceScreen extends ConsumerStatefulWidget {
   const FindDeviceScreen({super.key, required this.deviceId});
 
   final String deviceId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final device = ref.watch(deviceByIdProvider(deviceId));
+  ConsumerState<FindDeviceScreen> createState() => _FindDeviceScreenState();
+}
 
-    return device.when(
-      data: (item) => _FindDeviceContent(device: item),
+class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = ref.watch(deviceDetailProvider(widget.deviceId));
+
+    return detail.when(
+      data: (item) => _buildContent(context, item),
       loading: () => ListView(
         padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
         children: const [LoadingPanel(label: 'Loading find-device view')],
@@ -30,21 +39,14 @@ class FindDeviceScreen extends ConsumerWidget {
         children: [
           ErrorPanel(
             message: error.toString(),
-            onRetry: () => ref.refresh(deviceByIdProvider(deviceId)),
+            onRetry: () => ref.refresh(deviceDetailProvider(widget.deviceId)),
           ),
         ],
       ),
     );
   }
-}
 
-class _FindDeviceContent extends StatelessWidget {
-  const _FindDeviceContent({required this.device});
-
-  final DeviceRecord device;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildContent(BuildContext context, DeviceDetailRecord device) {
     final timestamp = DateFormat(
       'MMM d, yyyy • HH:mm',
     ).format(device.locationCapturedAt);
@@ -96,6 +98,20 @@ class _FindDeviceContent extends StatelessWidget {
                       size: 42,
                     ),
                   ),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: StatusBadge(
+                        label: device.isLost
+                            ? 'Lost mode active'
+                            : 'Monitoring',
+                        color: device.isLost
+                            ? LabGuardColors.warning
+                            : LabGuardColors.accent,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -106,9 +122,11 @@ class _FindDeviceContent extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const StatusBadge(
-                label: 'Lost mode active',
-                color: LabGuardColors.warning,
+              StatusBadge(
+                label: device.isLost ? 'Elevated recovery mode' : 'Normal mode',
+                color: device.isLost
+                    ? LabGuardColors.warning
+                    : LabGuardColors.success,
               ),
               const SizedBox(height: 18),
               _LocationRow(
@@ -118,16 +136,114 @@ class _FindDeviceContent extends StatelessWidget {
               _LocationRow(label: 'Timestamp', value: timestamp),
               _LocationRow(label: 'Network', value: device.lastKnownNetwork),
               _LocationRow(label: 'IP address', value: device.lastKnownIp),
+              _LocationRow(
+                label: 'Recovery state',
+                value: device.lostModeStatus,
+              ),
               const SizedBox(height: 16),
-              FilledButton.tonal(
-                onPressed: () {},
-                child: const Text('Mark Recovered'),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: _busy ? null : () => _toggleLostMode(device),
+                    child: Text(
+                      device.isLost ? 'Mark Recovered' : 'Mark Device Lost',
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: _busy ? null : () => _ringAlarm(device.id),
+                    child: const Text('Ring Alarm'),
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ],
     );
+  }
+
+  Future<void> _toggleLostMode(DeviceDetailRecord device) async {
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      if (device.isLost) {
+        await ref
+            .read(deviceActionsControllerProvider)
+            .markRecovered(device.id);
+      } else {
+        await ref.read(deviceActionsControllerProvider).markLostMode(device.id);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            device.isLost
+                ? 'Lost mode cleared and device marked recovered.'
+                : 'Lost mode enabled with elevated recovery tracking.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _ringAlarm(String deviceId) async {
+    setState(() {
+      _busy = true;
+    });
+
+    try {
+      await ref
+          .read(remoteActionsControllerProvider)
+          .queueAndComplete(
+            deviceId: deviceId,
+            commandType: RemoteCommandType.ringAlarm,
+            resultMessage: 'Alarm request delivered to the device.',
+          );
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Alarm command completed.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
   }
 }
 

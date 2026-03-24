@@ -83,6 +83,40 @@ type SecurityEventRecord = {
   deviceName?: string;
 };
 
+type SecurityHistoryEntry = {
+  id: string;
+  title: string;
+  detail: string;
+  occurredAt: string;
+};
+
+type RemoteCommandType =
+  | 'SIGN_OUT'
+  | 'REVOKE_VPN'
+  | 'ROTATE_SESSION'
+  | 'WIPE_APP_DATA'
+  | 'RING_ALARM'
+  | 'SHOW_RECOVERY_MESSAGE'
+  | 'MARK_RECOVERED'
+  | 'DISABLE_DEVICE_ACCESS';
+
+type RemoteCommandStatus =
+  | 'QUEUED'
+  | 'DELIVERED'
+  | 'SUCCEEDED'
+  | 'FAILED';
+
+type RemoteCommandRecord = {
+  commandId: string;
+  deviceId: string;
+  commandType: RemoteCommandType;
+  status: RemoteCommandStatus;
+  queuedAt: string;
+  completedAt?: string;
+  message?: string;
+  resultMessage?: string;
+};
+
 type VpnServerRecord = {
   id: string;
   name: string;
@@ -225,7 +259,7 @@ const deviceSeeds: DeviceSeed[] = [
   },
 ];
 
-const securityEvents: SecurityEventRecord[] = [
+let securityEvents: SecurityEventRecord[] = [
   {
     id: 'evt-01',
     type: 'DEVICE_MARKED_LOST',
@@ -258,6 +292,26 @@ const securityEvents: SecurityEventRecord[] = [
     unread: false,
     occurredAt: isoAgo({ hours: 4 }),
     deviceName: 'Owner Tablet',
+  },
+];
+
+let remoteCommands: RemoteCommandRecord[] = [
+  {
+    commandId: 'cmd-01',
+    deviceId: 'galaxy-s24',
+    status: 'SUCCEEDED',
+    commandType: 'SHOW_RECOVERY_MESSAGE',
+    queuedAt: isoAgo({ minutes: 18 }),
+    completedAt: isoAgo({ minutes: 17 }),
+    message: 'LabGuard owner is attempting recovery. Call +212 555 0147.',
+    resultMessage: 'Recovery message displayed on lock screen.',
+  },
+  {
+    commandId: 'cmd-02',
+    deviceId: 'galaxy-s24',
+    status: 'QUEUED',
+    commandType: 'RING_ALARM',
+    queuedAt: isoAgo({ minutes: 4 }),
   },
 ];
 
@@ -529,6 +583,102 @@ function sessionEnvelope(deviceId: string) {
   };
 }
 
+function nextId(prefix: string) {
+  return `${prefix}-${randomBytes(4).toString('hex')}`;
+}
+
+function findDeviceSeed(deviceId: string) {
+  return deviceSeeds.find((device) => device.id == deviceId) ?? null;
+}
+
+function requireDeviceSeed(deviceId: string) {
+  const device = findDeviceSeed(deviceId);
+
+  if (!device) {
+    throw new Error(`Unknown device: ${deviceId}`);
+  }
+
+  return device;
+}
+
+function findDeviceName(deviceId: string) {
+  return findDeviceSeed(deviceId)?.name ?? deviceId;
+}
+
+function prependSecurityEvent(event: SecurityEventRecord) {
+  securityEvents = [event, ...securityEvents];
+}
+
+function addSecurityEvent({
+  type,
+  severity,
+  title,
+  summary,
+  deviceId,
+}: {
+  type: string;
+  severity: SecurityEventSeverity;
+  title: string;
+  summary: string;
+  deviceId?: string;
+}) {
+  prependSecurityEvent({
+    id: nextId('evt'),
+    type,
+    severity,
+    title,
+    summary,
+    unread: true,
+    occurredAt: nowIso(),
+    ...(deviceId == null ? {} : { deviceName: findDeviceName(deviceId) }),
+  });
+}
+
+function buildSecurityHistory(deviceId: string): SecurityHistoryEntry[] {
+  const deviceName = findDeviceName(deviceId);
+  const historyFromEvents = securityEvents
+    .filter((event) => event.deviceName == deviceName)
+    .map<SecurityHistoryEntry>((event) => ({
+      id: event.id,
+      title: event.title,
+      detail: event.summary,
+      occurredAt: event.occurredAt,
+    }));
+
+  const historyFromCommands = remoteCommands
+    .filter((command) => command.deviceId == deviceId)
+    .map<SecurityHistoryEntry>((command) => ({
+      id: command.commandId,
+      title: `${command.commandType.replaceAll('_', ' ')} • ${command.status}`,
+      detail:
+        command.resultMessage ??
+        command.message ??
+        'Remote action queued through the LabGuard control plane.',
+      occurredAt: command.completedAt ?? command.queuedAt,
+    }));
+
+  return [...historyFromEvents, ...historyFromCommands].sort((left, right) =>
+    right.occurredAt.localeCompare(left.occurredAt),
+  );
+}
+
+function remoteActionsAvailable(device: DeviceRecord): RemoteCommandType[] {
+  if (device.trustState == 'REVOKED') {
+    return ['MARK_RECOVERED'];
+  }
+
+  return [
+    'SIGN_OUT',
+    'REVOKE_VPN',
+    'ROTATE_SESSION',
+    'WIPE_APP_DATA',
+    'RING_ALARM',
+    'SHOW_RECOVERY_MESSAGE',
+    ...(device.isLost ? (['MARK_RECOVERED'] as const) : []),
+    'DISABLE_DEVICE_ACCESS',
+  ];
+}
+
 export function getAuthSessionEnvelope() {
   return {
     ...sessionTokens,
@@ -607,8 +757,25 @@ export function getDeviceById(deviceId: string) {
   return buildDevices().find((device) => device.id == deviceId) ?? null;
 }
 
+export function getDeviceDetail(deviceId: string) {
+  const device = getDeviceById(deviceId);
+
+  if (!device) {
+    return null;
+  }
+
+  return {
+    ...device,
+    lostModeStatus: device.isLost ? 'ACTIVE' : 'OFF',
+    remoteActionsAvailable: remoteActionsAvailable(device),
+    securityHistory: buildSecurityHistory(deviceId),
+  };
+}
+
 export function listSecurityEvents() {
-  return securityEvents;
+  return [...securityEvents].sort((left, right) =>
+    right.occurredAt.localeCompare(left.occurredAt),
+  );
 }
 
 export function getPreferences() {
@@ -643,7 +810,9 @@ export function getAdminOverview() {
     ).length,
     activeVpnServers: vpnServers.filter((server) => server.status == 'ACTIVE')
       .length,
-    queuedRemoteCommands: 2,
+    queuedRemoteCommands: remoteCommands.filter(
+      (command) => command.status == 'QUEUED',
+    ).length,
     unreadSecurityEvents: events.filter((event) => event.unread).length,
   };
 }
@@ -674,6 +843,14 @@ export function rotateVpnProfile(deviceId: string) {
     lastError: 'Profile rotated. Reconnect with the freshly issued configuration.',
     bytesReceived: 0,
     bytesSent: 0,
+  });
+
+  addSecurityEvent({
+    type: 'VPN_PROFILE_ROTATED',
+    severity: 'WARNING',
+    title: 'VPN credentials rotated',
+    summary: 'A fresh WireGuard profile was issued for this device.',
+    deviceId,
   });
 
   return {
@@ -707,6 +884,15 @@ export function revokeVpnProfile(deviceId: string) {
     currentIp: 'Unavailable',
     dnsMode: 'Profile revoked',
     lastError: 'VPN access revoked for this device.',
+  });
+
+  addSecurityEvent({
+    type: 'VPN_ACCESS_REVOKED',
+    severity: 'CRITICAL',
+    title: 'VPN access revoked',
+    summary:
+      'The control plane revoked the active tunnel profile for this device.',
+    deviceId,
   });
 
   return {
@@ -806,5 +992,277 @@ export function recordVpnHeartbeat(patch: VpnSessionPatch) {
     accepted: true,
     syncedAt: nowIso(),
     session: sessionEnvelope(targetDeviceId),
+  };
+}
+
+export function updateDeviceMetadata(
+  deviceId: string,
+  patch: Partial<Pick<DeviceSeed, 'name' | 'isPrimary'>>,
+) {
+  const device = requireDeviceSeed(deviceId);
+
+  if (typeof patch.name == 'string' && patch.name.trim().length > 0) {
+    device.name = patch.name.trim();
+  }
+
+  if (patch.isPrimary === true) {
+    for (const entry of deviceSeeds) {
+      entry.isPrimary = entry.id == deviceId;
+    }
+  }
+
+  addSecurityEvent({
+    type: 'DEVICE_METADATA_UPDATED',
+    severity: 'INFO',
+    title: 'Device metadata updated',
+    summary: 'Device label or ownership metadata was changed.',
+    deviceId,
+  });
+
+  return getDeviceDetail(deviceId);
+}
+
+export function markDeviceLostMode(deviceId: string) {
+  const device = requireDeviceSeed(deviceId);
+  device.isLost = true;
+  device.locationCapturedAt = nowIso();
+
+  addSecurityEvent({
+    type: 'DEVICE_MARKED_LOST',
+    severity: 'CRITICAL',
+    title: `${device.name} marked as lost`,
+    summary:
+      'Lost mode is active and elevated location updates are permitted while the device is online.',
+    deviceId,
+  });
+
+  return {
+    deviceId,
+    lostModeStatus: 'ACTIVE',
+    telemetryElevated: true,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function markDeviceRecovered(deviceId: string) {
+  const device = requireDeviceSeed(deviceId);
+  device.isLost = false;
+
+  addSecurityEvent({
+    type: 'DEVICE_RECOVERED',
+    severity: 'INFO',
+    title: `${device.name} marked recovered`,
+    summary: 'Lost mode was cleared and elevated tracking was disabled.',
+    deviceId,
+  });
+
+  return {
+    deviceId,
+    lostModeStatus: 'RECOVERED',
+    telemetryElevated: false,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function revokeDeviceAccess(deviceId: string) {
+  const device = requireDeviceSeed(deviceId);
+  device.trustState = 'REVOKED';
+  revokeVpnProfile(deviceId);
+
+  addSecurityEvent({
+    type: 'DEVICE_REVOKED',
+    severity: 'CRITICAL',
+    title: `${device.name} access revoked`,
+    summary: 'The device can no longer authenticate or obtain VPN access.',
+    deviceId,
+  });
+
+  return {
+    deviceId,
+    trustState: device.trustState,
+    vpnAccessActive: false,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function suspendDevice(deviceId: string) {
+  const device = requireDeviceSeed(deviceId);
+  device.trustState = 'SUSPENDED';
+  recordVpnSessionDisconnect({
+    deviceId,
+    reason: 'Device suspended by the LabGuard control plane.',
+  });
+
+  addSecurityEvent({
+    type: 'DEVICE_SUSPENDED',
+    severity: 'WARNING',
+    title: `${device.name} suspended`,
+    summary: 'Device access is paused until it is reapproved.',
+    deviceId,
+  });
+
+  return {
+    deviceId,
+    trustState: device.trustState,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function rotateDeviceCredentials(deviceId: string) {
+  const result = rotateVpnProfile(deviceId);
+
+  addSecurityEvent({
+    type: 'DEVICE_CREDENTIALS_ROTATED',
+    severity: 'WARNING',
+    title: 'Device credentials rotated',
+    summary: 'The device must fetch the latest secure configuration.',
+    deviceId,
+  });
+
+  return {
+    deviceId,
+    rotatedAt: result.rotatedAt,
+    profile: result.profile,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function recordDeviceLocation(
+  deviceId: string,
+  patch: Partial<
+    Pick<DeviceSeed, 'lastKnownLocation' | 'lastKnownNetwork' | 'lastKnownIp'>
+  >,
+) {
+  const device = requireDeviceSeed(deviceId);
+
+  if (typeof patch.lastKnownLocation == 'string') {
+    device.lastKnownLocation = patch.lastKnownLocation;
+  }
+
+  if (typeof patch.lastKnownNetwork == 'string') {
+    device.lastKnownNetwork = patch.lastKnownNetwork;
+  }
+
+  if (typeof patch.lastKnownIp == 'string') {
+    device.lastKnownIp = patch.lastKnownIp;
+  }
+
+  device.locationCapturedAt = nowIso();
+  device.lastActiveAt = nowIso();
+
+  return {
+    deviceId,
+    accepted: true,
+    recordedAt: device.locationCapturedAt,
+    device: getDeviceDetail(deviceId),
+  };
+}
+
+export function listRemoteCommands(deviceId: string) {
+  return remoteCommands
+    .filter((command) => command.deviceId == deviceId)
+    .sort((left, right) =>
+      (right.completedAt ?? right.queuedAt).localeCompare(
+        left.completedAt ?? left.queuedAt,
+      ),
+    );
+}
+
+export function queueRemoteCommand({
+  deviceId,
+  commandType,
+  message,
+}: {
+  deviceId: string;
+  commandType: RemoteCommandType;
+  message?: string;
+}) {
+  requireDeviceSeed(deviceId);
+  const command: RemoteCommandRecord = {
+    commandId: nextId('cmd'),
+    deviceId,
+    commandType,
+    status: 'QUEUED',
+    queuedAt: nowIso(),
+    ...(message == null ? {} : { message }),
+  };
+  remoteCommands = [command, ...remoteCommands];
+
+  addSecurityEvent({
+    type: 'REMOTE_COMMAND_QUEUED',
+    severity: commandType == 'DISABLE_DEVICE_ACCESS' ? 'WARNING' : 'INFO',
+    title: `${commandType.replaceAll('_', ' ')} queued`,
+    summary:
+      message == null
+        ? 'A remote action was queued for delivery to the device.'
+        : `A remote action was queued with operator message: ${message}`,
+    deviceId,
+  });
+
+  return command;
+}
+
+export function reportRemoteCommandResult(
+  commandId: string,
+  patch: Partial<Pick<RemoteCommandRecord, 'status' | 'resultMessage'>>,
+) {
+  const command = remoteCommands.find((entry) => entry.commandId == commandId);
+
+  if (!command) {
+    throw new Error(`Unknown command: ${commandId}`);
+  }
+
+  command.status = patch.status ?? 'SUCCEEDED';
+  command.completedAt = nowIso();
+  command.resultMessage =
+    patch.resultMessage ?? 'Remote action acknowledged by the device.';
+
+  if (command.status == 'SUCCEEDED') {
+    switch (command.commandType) {
+      case 'REVOKE_VPN':
+        revokeVpnProfile(command.deviceId);
+        break;
+      case 'MARK_RECOVERED':
+        markDeviceRecovered(command.deviceId);
+        break;
+      case 'DISABLE_DEVICE_ACCESS':
+        suspendDevice(command.deviceId);
+        break;
+      case 'RING_ALARM':
+      case 'ROTATE_SESSION':
+      case 'SIGN_OUT':
+      case 'SHOW_RECOVERY_MESSAGE':
+      case 'WIPE_APP_DATA':
+        addSecurityEvent({
+          type: 'REMOTE_COMMAND_SUCCEEDED',
+          severity: command.commandType == 'WIPE_APP_DATA' ? 'WARNING' : 'INFO',
+          title: `${command.commandType.replaceAll('_', ' ')} completed`,
+          summary: command.resultMessage,
+          deviceId: command.deviceId,
+        });
+        break;
+    }
+  } else if (command.status == 'FAILED') {
+    addSecurityEvent({
+      type: 'REMOTE_COMMAND_FAILED',
+      severity: 'WARNING',
+      title: `${command.commandType.replaceAll('_', ' ')} failed`,
+      summary: command.resultMessage ?? 'The device did not complete the action.',
+      deviceId: command.deviceId,
+    });
+  }
+
+  return command;
+}
+
+export function markSecurityEventRead(eventId: string) {
+  securityEvents = securityEvents.map((event) =>
+    event.id == eventId ? { ...event, unread: false } : event,
+  );
+
+  return {
+    eventId,
+    unread: false,
+    readAt: nowIso(),
   };
 }

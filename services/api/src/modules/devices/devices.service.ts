@@ -1,6 +1,13 @@
 import {
-  getDeviceById,
+  getDeviceDetail,
   listDevices,
+  markDeviceLostMode,
+  markDeviceRecovered,
+  recordDeviceLocation,
+  revokeDeviceAccess,
+  rotateDeviceCredentials,
+  suspendDevice,
+  updateDeviceMetadata,
 } from '../../common/mock/control-plane-data.js';
 
 export class DevicesService {
@@ -9,37 +16,7 @@ export class DevicesService {
   }
 
   getDevice(deviceId: string) {
-    const device = getDeviceById(deviceId);
-
-    if (!device) {
-      return null;
-    }
-
-    return {
-      ...device,
-      lostModeStatus: device.isLost ? 'ACTIVE' : 'OFF',
-      remoteActionsAvailable: [
-        'SIGN_OUT',
-        'REVOKE_VPN',
-        'ROTATE_SESSION',
-        'RING_ALARM',
-        'SHOW_RECOVERY_MESSAGE',
-      ],
-      securityHistory: [
-        {
-          id: 'history-01',
-          title: 'VPN profile rotated',
-          occurredAt: device.locationCapturedAt,
-        },
-        {
-          id: 'history-02',
-          title: device.isLost
-              ? 'Lost mode enabled'
-              : 'Device registered and trusted',
-          occurredAt: device.lastActiveAt,
-        },
-      ],
-    };
+    return getDeviceDetail(deviceId);
   }
 
   registerDevice() {
@@ -50,57 +27,42 @@ export class DevicesService {
     };
   }
 
-  updateDevice(deviceId: string) {
-    return {
-      deviceId,
-      updated: true,
-    };
+  updateDevice(
+    deviceId: string,
+    patch: Partial<{ name: string; isPrimary: boolean }>,
+  ) {
+    return updateDeviceMetadata(deviceId, patch);
   }
 
   markLostMode(deviceId: string) {
-    return {
-      deviceId,
-      lostModeStatus: 'ACTIVE',
-      telemetryElevated: true,
-    };
+    return markDeviceLostMode(deviceId);
   }
 
   markRecovered(deviceId: string) {
-    return {
-      deviceId,
-      lostModeStatus: 'RECOVERED',
-      telemetryElevated: false,
-    };
+    return markDeviceRecovered(deviceId);
   }
 
   revoke(deviceId: string) {
-    return {
-      deviceId,
-      trustState: 'REVOKED',
-      vpnAccessActive: false,
-    };
+    return revokeDeviceAccess(deviceId);
   }
 
   suspend(deviceId: string) {
-    return {
-      deviceId,
-      trustState: 'SUSPENDED',
-    };
+    return suspendDevice(deviceId);
   }
 
   rotateCredentials(deviceId: string) {
-    return {
-      deviceId,
-      rotatedAt: new Date().toISOString(),
-    };
+    return rotateDeviceCredentials(deviceId);
   }
 
-  recordLocation(deviceId: string) {
-    return {
-      deviceId,
-      accepted: true,
-      recordedAt: new Date().toISOString(),
-    };
+  recordLocation(
+    deviceId: string,
+    patch: Partial<{
+      lastKnownLocation: string;
+      lastKnownNetwork: string;
+      lastKnownIp: string;
+    }>,
+  ) {
+    return recordDeviceLocation(deviceId, patch);
   }
 }
 

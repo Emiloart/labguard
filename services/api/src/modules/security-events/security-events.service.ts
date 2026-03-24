@@ -1,4 +1,7 @@
-import { listSecurityEvents } from '../../common/mock/control-plane-data.js';
+import {
+  listSecurityEvents,
+  markSecurityEventRead,
+} from '../../common/mock/control-plane-data.js';
 
 export class SecurityEventsService {
   listEvents() {
@@ -6,11 +9,7 @@ export class SecurityEventsService {
   }
 
   markRead(eventId: string) {
-    return {
-      eventId,
-      unread: false,
-      readAt: new Date().toISOString(),
-    };
+    return markSecurityEventRead(eventId);
   }
 }
 

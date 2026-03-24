@@ -67,6 +67,91 @@ class DeviceRecord {
   }
 }
 
+class DeviceDetailRecord extends DeviceRecord {
+  const DeviceDetailRecord({
+    required super.id,
+    required super.name,
+    required super.model,
+    required super.platform,
+    required super.appVersion,
+    required super.lastActiveAt,
+    required super.vpnStatus,
+    required super.batteryLevel,
+    required super.lastKnownIp,
+    required super.lastKnownNetwork,
+    required super.lastKnownLocation,
+    required super.locationCapturedAt,
+    required super.trustState,
+    required super.isLost,
+    required super.isPrimary,
+    required this.lostModeStatus,
+    required this.remoteActionsAvailable,
+    required this.securityHistory,
+  });
+
+  factory DeviceDetailRecord.fromJson(Map<String, dynamic> json) {
+    final base = DeviceRecord.fromJson(json);
+    final rawActions =
+        json['remoteActionsAvailable'] as List<dynamic>? ?? const [];
+    final rawHistory = json['securityHistory'] as List<dynamic>? ?? const [];
+
+    return DeviceDetailRecord(
+      id: base.id,
+      name: base.name,
+      model: base.model,
+      platform: base.platform,
+      appVersion: base.appVersion,
+      lastActiveAt: base.lastActiveAt,
+      vpnStatus: base.vpnStatus,
+      batteryLevel: base.batteryLevel,
+      lastKnownIp: base.lastKnownIp,
+      lastKnownNetwork: base.lastKnownNetwork,
+      lastKnownLocation: base.lastKnownLocation,
+      locationCapturedAt: base.locationCapturedAt,
+      trustState: base.trustState,
+      isLost: base.isLost,
+      isPrimary: base.isPrimary,
+      lostModeStatus: json['lostModeStatus'] as String? ?? 'OFF',
+      remoteActionsAvailable: rawActions.whereType<String>().toList(
+        growable: false,
+      ),
+      securityHistory: rawHistory
+          .whereType<Map<String, dynamic>>()
+          .map(DeviceSecurityHistoryEntry.fromJson)
+          .toList(growable: false),
+    );
+  }
+
+  final String lostModeStatus;
+  final List<String> remoteActionsAvailable;
+  final List<DeviceSecurityHistoryEntry> securityHistory;
+}
+
+class DeviceSecurityHistoryEntry {
+  const DeviceSecurityHistoryEntry({
+    required this.id,
+    required this.title,
+    required this.detail,
+    required this.occurredAt,
+  });
+
+  factory DeviceSecurityHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return DeviceSecurityHistoryEntry(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? 'Security event',
+      detail: json['detail'] as String? ?? 'No additional detail available.',
+      occurredAt:
+          DateTime.tryParse(json['occurredAt'] as String? ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+
+  final String id;
+  final String title;
+  final String detail;
+  final DateTime occurredAt;
+}
+
 DeviceTrustState deviceTrustStateFromWire(String value) {
   switch (value) {
     case 'TRUSTED':

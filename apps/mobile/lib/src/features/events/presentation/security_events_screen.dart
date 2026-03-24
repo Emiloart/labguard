@@ -35,13 +35,13 @@ class SecurityEventsScreen extends ConsumerWidget {
   }
 }
 
-class _SecurityEventsContent extends StatelessWidget {
+class _SecurityEventsContent extends ConsumerWidget {
   const _SecurityEventsContent({required this.events});
 
   final List<SecurityEventRecord> events;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final formatter = DateFormat('MMM d, HH:mm');
 
     return ListView.separated(
@@ -68,38 +68,58 @@ class _SecurityEventsContent extends StatelessWidget {
 
         final event = events[index - 1];
 
-        return AppPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  StatusBadge(
-                    label: _severityLabel(event.severity),
-                    color: _severityColor(event.severity),
-                  ),
-                  if (event.unread) ...[
-                    const SizedBox(width: 8),
-                    const StatusBadge(
-                      label: 'Unread',
-                      color: LabGuardColors.accent,
+        return InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: event.unread
+              ? () async {
+                  await ref
+                      .read(securityEventsControllerProvider)
+                      .markRead(event.id);
+                }
+              : null,
+          child: AppPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    StatusBadge(
+                      label: _severityLabel(event.severity),
+                      color: _severityColor(event.severity),
                     ),
+                    if (event.unread) ...[
+                      const SizedBox(width: 8),
+                      const StatusBadge(
+                        label: 'Unread',
+                        color: LabGuardColors.accent,
+                      ),
+                    ],
                   ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  event.title,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  event.summary,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  '${event.deviceName ?? 'Account'} • ${formatter.format(event.occurredAt)}',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                if (event.unread) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Tap to mark read',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ],
-              ),
-              const SizedBox(height: 14),
-              Text(event.title, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Text(
-                event.summary,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 14),
-              Text(
-                '${event.deviceName ?? 'Account'} • ${formatter.format(event.occurredAt)}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },

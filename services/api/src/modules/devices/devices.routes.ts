@@ -30,7 +30,14 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.patch('/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.updateDevice(params.deviceId);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    return devicesService.updateDevice(params.deviceId, {
+      ...(typeof body['name'] == 'string' ? { name: body['name'] } : {}),
+      ...(typeof body['isPrimary'] == 'boolean'
+        ? { isPrimary: body['isPrimary'] }
+        : {}),
+    });
   });
 
   app.post('/:deviceId/revoke', async (request) => {
@@ -60,6 +67,18 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:deviceId/location', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.recordLocation(params.deviceId);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    return devicesService.recordLocation(params.deviceId, {
+      ...(typeof body['lastKnownLocation'] == 'string'
+        ? { lastKnownLocation: body['lastKnownLocation'] }
+        : {}),
+      ...(typeof body['lastKnownNetwork'] == 'string'
+        ? { lastKnownNetwork: body['lastKnownNetwork'] }
+        : {}),
+      ...(typeof body['lastKnownIp'] == 'string'
+        ? { lastKnownIp: body['lastKnownIp'] }
+        : {}),
+    });
   });
 };
