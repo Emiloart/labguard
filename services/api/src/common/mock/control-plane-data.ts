@@ -90,6 +90,17 @@ type SecurityHistoryEntry = {
   occurredAt: string;
 };
 
+type DeviceLocationRecord = {
+  id: string;
+  deviceId: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  capturedAt: string;
+  source: 'BACKGROUND' | 'LOST_MODE' | 'MANUAL_REFRESH';
+};
+
 type RemoteCommandType =
   | 'SIGN_OUT'
   | 'REVOKE_VPN'
@@ -314,6 +325,84 @@ let remoteCommands: RemoteCommandRecord[] = [
     queuedAt: isoAgo({ minutes: 4 }),
   },
 ];
+
+const deviceLocationFeeds = new Map<string, DeviceLocationRecord[]>([
+  [
+    'pixel-9-pro',
+    [
+      {
+        id: 'loc-pixel-01',
+        deviceId: 'pixel-9-pro',
+        label: 'Casablanca, MA',
+        latitude: 33.5731,
+        longitude: -7.5898,
+        accuracyMeters: 16,
+        capturedAt: isoAgo({ minutes: 5 }),
+        source: 'BACKGROUND',
+      },
+      {
+        id: 'loc-pixel-02',
+        deviceId: 'pixel-9-pro',
+        label: 'Casablanca, MA',
+        latitude: 33.5736,
+        longitude: -7.5892,
+        accuracyMeters: 12,
+        capturedAt: isoAgo({ minutes: 2 }),
+        source: 'BACKGROUND',
+      },
+    ],
+  ],
+  [
+    'galaxy-s24',
+    [
+      {
+        id: 'loc-s24-01',
+        deviceId: 'galaxy-s24',
+        label: 'Rabat, MA',
+        latitude: 34.0209,
+        longitude: -6.8416,
+        accuracyMeters: 44,
+        capturedAt: isoAgo({ minutes: 36 }),
+        source: 'BACKGROUND',
+      },
+      {
+        id: 'loc-s24-02',
+        deviceId: 'galaxy-s24',
+        label: 'Rabat, MA',
+        latitude: 34.0217,
+        longitude: -6.8407,
+        accuracyMeters: 31,
+        capturedAt: isoAgo({ minutes: 18 }),
+        source: 'LOST_MODE',
+      },
+      {
+        id: 'loc-s24-03',
+        deviceId: 'galaxy-s24',
+        label: 'Rabat, MA',
+        latitude: 34.0222,
+        longitude: -6.8399,
+        accuracyMeters: 18,
+        capturedAt: isoAgo({ minutes: 7 }),
+        source: 'LOST_MODE',
+      },
+    ],
+  ],
+  [
+    'owner-tablet',
+    [
+      {
+        id: 'loc-tab-01',
+        deviceId: 'owner-tablet',
+        label: 'Last update withheld',
+        latitude: 33.9716,
+        longitude: -6.8498,
+        accuracyMeters: 120,
+        capturedAt: isoAgo({ hours: 5 }),
+        source: 'BACKGROUND',
+      },
+    ],
+  ],
+]);
 
 const vpnProfiles = new Map<string, VpnProfileRecord>();
 const vpnRuntimeByDevice = new Map<string, VpnRuntimeState>([
@@ -662,6 +751,54 @@ function buildSecurityHistory(deviceId: string): SecurityHistoryEntry[] {
   );
 }
 
+function listDeviceLocationFeed(deviceId: string) {
+  return [...(deviceLocationFeeds.get(deviceId) ?? [])].sort((left, right) =>
+    right.capturedAt.localeCompare(left.capturedAt),
+  );
+}
+
+function latestDeviceLocation(deviceId: string) {
+  return listDeviceLocationFeed(deviceId)[0] ?? null;
+}
+
+function pushDeviceLocation(record: DeviceLocationRecord) {
+  const existing = listDeviceLocationFeed(record.deviceId);
+  deviceLocationFeeds.set(record.deviceId, [record, ...existing].slice(0, 12));
+
+  const device = findDeviceSeed(record.deviceId);
+  if (device) {
+    device.lastKnownLocation = record.label;
+    device.locationCapturedAt = record.capturedAt;
+  }
+}
+
+function locationSnapshot(deviceId: string) {
+  const latest = latestDeviceLocation(deviceId);
+  const device = requireDeviceSeed(deviceId);
+  const liveTrackingEnabled = device.isLost;
+
+  return {
+    deviceId,
+    lostModeStatus: device.isLost ? 'ACTIVE' : 'OFF',
+    liveTrackingEnabled,
+    updateMode: liveTrackingEnabled
+      ? 'elevated_lost_mode'
+      : 'minimal_background',
+    updateFrequencyLabel: liveTrackingEnabled
+      ? 'Every few minutes while online'
+      : 'Only on explicit security events',
+    currentLocation:
+      latest == null
+          ? null
+          : {
+              ...latest,
+              lastKnownNetwork: device.lastKnownNetwork,
+              lastKnownIp: device.lastKnownIp,
+            },
+    items: listDeviceLocationFeed(deviceId),
+  };
+}
+
 function remoteActionsAvailable(device: DeviceRecord): RemoteCommandType[] {
   if (device.trustState == 'REVOKED') {
     return ['MARK_RECOVERED'];
@@ -770,6 +907,16 @@ export function getDeviceDetail(deviceId: string) {
     remoteActionsAvailable: remoteActionsAvailable(device),
     securityHistory: buildSecurityHistory(deviceId),
   };
+}
+
+export function getDeviceLocationSnapshot(deviceId: string) {
+  const device = getDeviceById(deviceId);
+
+  if (!device) {
+    return null;
+  }
+
+  return locationSnapshot(deviceId);
 }
 
 export function listSecurityEvents() {
@@ -1026,6 +1173,18 @@ export function markDeviceLostMode(deviceId: string) {
   const device = requireDeviceSeed(deviceId);
   device.isLost = true;
   device.locationCapturedAt = nowIso();
+  const latest = latestDeviceLocation(deviceId);
+
+  pushDeviceLocation({
+    id: nextId('loc'),
+    deviceId,
+    label: latest?.label ?? device.lastKnownLocation,
+    latitude: (latest?.latitude ?? 33.5731) + 0.0004,
+    longitude: (latest?.longitude ?? -7.5898) + 0.0004,
+    accuracyMeters: 22,
+    capturedAt: device.locationCapturedAt,
+    source: 'LOST_MODE',
+  });
 
   addSecurityEvent({
     type: 'DEVICE_MARKED_LOST',
@@ -1131,13 +1290,34 @@ export function recordDeviceLocation(
   deviceId: string,
   patch: Partial<
     Pick<DeviceSeed, 'lastKnownLocation' | 'lastKnownNetwork' | 'lastKnownIp'>
-  >,
+  > & {
+    latitude?: number;
+    longitude?: number;
+    accuracyMeters?: number;
+  },
 ) {
   const device = requireDeviceSeed(deviceId);
+  const latest = latestDeviceLocation(deviceId);
+  const latitude =
+    typeof patch.latitude == 'number'
+      ? (patch.latitude ?? 0)
+      : (latest?.latitude ?? 33.5731) + (device.isLost ? 0.0008 : 0.0002);
+  const longitude =
+    typeof patch.longitude == 'number'
+      ? (patch.longitude ?? 0)
+      : (latest?.longitude ?? -7.5898) + (device.isLost ? 0.0006 : 0.0002);
+  const accuracyMeters =
+    typeof patch.accuracyMeters == 'number'
+      ? (patch.accuracyMeters ?? 0)
+      : device.isLost
+        ? 14
+        : 42;
+  const label =
+    typeof patch.lastKnownLocation == 'string'
+      ? patch.lastKnownLocation
+      : latest?.label ?? device.lastKnownLocation;
 
-  if (typeof patch.lastKnownLocation == 'string') {
-    device.lastKnownLocation = patch.lastKnownLocation;
-  }
+  device.lastKnownLocation = label;
 
   if (typeof patch.lastKnownNetwork == 'string') {
     device.lastKnownNetwork = patch.lastKnownNetwork;
@@ -1149,11 +1329,31 @@ export function recordDeviceLocation(
 
   device.locationCapturedAt = nowIso();
   device.lastActiveAt = nowIso();
+  pushDeviceLocation({
+    id: nextId('loc'),
+    deviceId,
+    label,
+    latitude,
+    longitude,
+    accuracyMeters,
+    capturedAt: device.locationCapturedAt,
+    source: device.isLost ? 'LOST_MODE' : 'MANUAL_REFRESH',
+  });
+
+  addSecurityEvent({
+    type: 'DEVICE_LOCATION_RECORDED',
+    severity: device.isLost ? 'WARNING' : 'INFO',
+    title: 'Device location refreshed',
+    summary:
+      'A fresh location sample was recorded for this device and appended to recovery history.',
+    deviceId,
+  });
 
   return {
     deviceId,
     accepted: true,
     recordedAt: device.locationCapturedAt,
+    location: locationSnapshot(deviceId),
     device: getDeviceDetail(deviceId),
   };
 }

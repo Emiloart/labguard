@@ -28,6 +28,21 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
     return device;
   });
 
+  app.get('/:deviceId/locations', async (request, reply) => {
+    const params = request.params as { deviceId: string };
+    const snapshot = devicesService.getDeviceLocations(params.deviceId);
+
+    if (!snapshot) {
+      return reply.code(404).send({
+        error: 'Not Found',
+        message: 'Device not found.',
+        requestId: request.id,
+      });
+    }
+
+    return snapshot;
+  });
+
   app.patch('/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -78,6 +93,13 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
         : {}),
       ...(typeof body['lastKnownIp'] == 'string'
         ? { lastKnownIp: body['lastKnownIp'] }
+        : {}),
+      ...(typeof body['latitude'] == 'number' ? { latitude: body['latitude'] } : {}),
+      ...(typeof body['longitude'] == 'number'
+        ? { longitude: body['longitude'] }
+        : {}),
+      ...(typeof body['accuracyMeters'] == 'number'
+        ? { accuracyMeters: body['accuracyMeters'] }
         : {}),
     });
   });

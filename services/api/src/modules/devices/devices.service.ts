@@ -1,5 +1,6 @@
 import {
   getDeviceDetail,
+  getDeviceLocationSnapshot,
   listDevices,
   markDeviceLostMode,
   markDeviceRecovered,
@@ -17,6 +18,10 @@ export class DevicesService {
 
   getDevice(deviceId: string) {
     return getDeviceDetail(deviceId);
+  }
+
+  getDeviceLocations(deviceId: string) {
+    return getDeviceLocationSnapshot(deviceId);
   }
 
   registerDevice() {
@@ -60,6 +65,9 @@ export class DevicesService {
       lastKnownLocation: string;
       lastKnownNetwork: string;
       lastKnownIp: string;
+      latitude: number;
+      longitude: number;
+      accuracyMeters: number;
     }>,
   ) {
     return recordDeviceLocation(deviceId, patch);
