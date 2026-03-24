@@ -55,8 +55,11 @@ class LabGuardCommandSyncWorker(
             Result.success()
         } catch (error: HttpStatusException) {
             if (error.statusCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
-                secureStateStore.clearAuthSession()
-                LabGuardCommandSyncScheduler.disable(applicationContext)
+                invalidateLocalTrustedAccess(
+                    title = "LabGuard session invalidated",
+                    message =
+                        "Trusted access expired or was revoked. Reauthenticate before secure access resumes.",
+                )
                 Result.success()
             } else if (error.statusCode >= 500) {
                 Result.retry()
@@ -105,6 +108,8 @@ class LabGuardCommandSyncWorker(
     ): CommandOutcome {
         return when (command.commandType) {
             "SIGN_OUT" -> {
+                secureStateStore.clearRecoverySignal()
+                notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
                 notifier.showSecurityAlert(
                     title = "LabGuard signed out",
@@ -137,6 +142,8 @@ class LabGuardCommandSyncWorker(
             }
 
             "ROTATE_SESSION" -> {
+                secureStateStore.clearRecoverySignal()
+                notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
                 notifier.showSecurityAlert(
                     title = "LabGuard session rotated",
@@ -220,6 +227,8 @@ class LabGuardCommandSyncWorker(
             }
 
             "DISABLE_DEVICE_ACCESS" -> {
+                secureStateStore.clearRecoverySignal()
+                notifier.clearRecoveryAlerts()
                 vpnManager.clearProfile(applicationContext)
                 notifier.showSecurityAlert(
                     title = "LabGuard access disabled",
@@ -469,6 +478,21 @@ class LabGuardCommandSyncWorker(
                 statusCode = HttpURLConnection.HTTP_UNAUTHORIZED,
                 message = "No active LabGuard session is stored on the device.",
             )
+    }
+
+    private fun invalidateLocalTrustedAccess(
+        title: String,
+        message: String,
+    ) {
+        secureStateStore.clearRecoverySignal()
+        notifier.clearRecoveryAlerts()
+        vpnManager.clearProfile(applicationContext)
+        notifier.showSecurityAlert(
+            title = title,
+            message = message,
+        )
+        secureStateStore.clearAuthSession()
+        LabGuardCommandSyncScheduler.disable(applicationContext)
     }
 
     data class PendingRemoteCommand(

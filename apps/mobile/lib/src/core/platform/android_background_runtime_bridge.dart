@@ -36,4 +36,16 @@ class AndroidBackgroundRuntimeBridge {
       // Android-specific bridge unavailable in tests or future non-Android builds.
     }
   }
+
+  Future<void> syncRuntimePreferences({
+    required bool notificationsEnabled,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>('syncRuntimePreferences', {
+        'notificationsEnabled': notificationsEnabled,
+      });
+    } on MissingPluginException {
+      // Android-specific bridge unavailable in tests or future non-Android builds.
+    }
+  }
 }

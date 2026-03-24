@@ -13,6 +13,8 @@ import com.emilolabs.labguard.R
 class LabGuardRuntimeNotifier(
     private val context: Context,
 ) {
+    private val secureStateStore = LabGuardSecureStateStore(context)
+
     fun showRecoveryAlert(
         title: String,
         message: String,
@@ -34,6 +36,10 @@ class LabGuardRuntimeNotifier(
         title: String,
         message: String,
     ) {
+        if (!shouldShowSecurityAlerts()) {
+            return
+        }
+
         ensureChannels()
         notificationManager()?.notify(
             SECURITY_NOTIFICATION_ID,
@@ -124,6 +130,10 @@ class LabGuardRuntimeNotifier(
 
     private fun notificationManager(): NotificationManager? =
         context.getSystemService(NotificationManager::class.java)
+
+    private fun shouldShowSecurityAlerts(): Boolean {
+        return secureStateStore.readRuntimePreferences()?.notificationsEnabled ?: true
+    }
 
     companion object {
         private const val RECOVERY_CHANNEL_ID = "labguard.runtime.recovery"

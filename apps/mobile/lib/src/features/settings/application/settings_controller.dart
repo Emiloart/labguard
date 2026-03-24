@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../data/settings_repository.dart';
 import '../domain/settings_bundle.dart';
 
@@ -11,7 +12,11 @@ final settingsControllerProvider =
 class SettingsController extends AsyncNotifier<SettingsBundle> {
   @override
   Future<SettingsBundle> build() async {
-    return ref.watch(settingsRepositoryProvider).fetchSettings();
+    final settings = await ref
+        .watch(settingsRepositoryProvider)
+        .fetchSettings();
+    await _syncRuntimePreferences(settings.preferences);
+    return settings;
   }
 
   Future<void> updatePreferences(
@@ -36,5 +41,19 @@ class SettingsController extends AsyncNotifier<SettingsBundle> {
           .read(settingsRepositoryProvider)
           .updatePreferences(optimistic.preferences),
     );
+
+    final synchronized = state.valueOrNull;
+
+    if (synchronized != null) {
+      await _syncRuntimePreferences(synchronized.preferences);
+    }
+  }
+
+  Future<void> _syncRuntimePreferences(SecurityPreferences preferences) {
+    return ref
+        .read(androidBackgroundRuntimeBridgeProvider)
+        .syncRuntimePreferences(
+          notificationsEnabled: preferences.notificationsEnabled,
+        );
   }
 }

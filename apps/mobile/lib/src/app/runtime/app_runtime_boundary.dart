@@ -9,6 +9,7 @@ import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/domain/auth_state.dart';
 import '../../features/remote_actions/application/remote_command_runtime.dart';
 import '../../features/remote_actions/data/recovery_signal_store.dart';
+import '../../features/settings/application/settings_controller.dart';
 import '../../features/vpn/application/vpn_session_controller.dart';
 
 class AppRuntimeBoundary extends ConsumerStatefulWidget {
@@ -106,6 +107,12 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
 
     if (ref.read(authControllerProvider).stage != AuthStage.signedIn) {
       return;
+    }
+
+    try {
+      await ref.read(settingsControllerProvider.future);
+    } catch (_) {
+      // Preference sync should not crash the shell or block command handling.
     }
 
     try {

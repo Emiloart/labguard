@@ -24,6 +24,23 @@ class LabGuardSecureStateStore(
         deleteRaw(AUTH_SESSION_KEY)
     }
 
+    fun readRuntimePreferences(): StoredRuntimePreferences? {
+        val raw = readRaw(RUNTIME_PREFERENCES_KEY) ?: return null
+        val payload = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+
+        return StoredRuntimePreferences(
+            notificationsEnabled = payload.optBoolean("notificationsEnabled", true),
+        )
+    }
+
+    fun writeRuntimePreferences(preferences: StoredRuntimePreferences) {
+        val payload =
+            JSONObject()
+                .put("notificationsEnabled", preferences.notificationsEnabled)
+
+        writeRaw(RUNTIME_PREFERENCES_KEY, payload.toString())
+    }
+
     fun readVpnProfile(deviceId: String): StoredVpnProfile? {
         val raw = readRaw("$VPN_PROFILE_KEY_PREFIX$deviceId") ?: return null
         return parseVpnProfile(raw)
@@ -256,9 +273,14 @@ class LabGuardSecureStateStore(
         val note: String,
     )
 
+    data class StoredRuntimePreferences(
+        val notificationsEnabled: Boolean,
+    )
+
     companion object {
         const val AUTH_SESSION_KEY = "labguard.auth.session"
         const val RECOVERY_SIGNAL_KEY = "labguard.device.recovery_signal"
+        const val RUNTIME_PREFERENCES_KEY = "labguard.runtime.preferences"
         const val VPN_PROFILE_KEY_PREFIX = "labguard.vpn.profile."
     }
 }

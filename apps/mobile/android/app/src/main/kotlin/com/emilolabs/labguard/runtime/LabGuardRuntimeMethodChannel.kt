@@ -23,6 +23,8 @@ class LabGuardRuntimeMethodChannel {
 private class LabGuardRuntimeMethodCallHandler(
     private val context: Context,
 ) : MethodChannel.MethodCallHandler {
+    private val secureStateStore = LabGuardSecureStateStore(context)
+
     override fun onMethodCall(
         call: MethodCall,
         result: MethodChannel.Result,
@@ -45,6 +47,16 @@ private class LabGuardRuntimeMethodCallHandler(
                 LabGuardCommandSyncScheduler.triggerNow(
                     context = context,
                     apiBaseUrl = apiBaseUrl,
+                )
+                result.success(null)
+            }
+
+            "syncRuntimePreferences" -> {
+                val notificationsEnabled = call.argument<Boolean>("notificationsEnabled") ?: true
+                secureStateStore.writeRuntimePreferences(
+                    LabGuardSecureStateStore.StoredRuntimePreferences(
+                        notificationsEnabled = notificationsEnabled,
+                    ),
                 )
                 result.success(null)
             }
