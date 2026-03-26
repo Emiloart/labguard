@@ -25,6 +25,38 @@ class AndroidSystemSecurityBridge {
     return _requestPosture('requestLocationPermission');
   }
 
+  Future<AndroidDeviceIdentity?> getDeviceIdentity() async {
+    try {
+      final values = await _channel.invokeMapMethod<String, dynamic>(
+        'getDeviceIdentity',
+      );
+
+      if (values == null || values.isEmpty) {
+        return null;
+      }
+
+      return AndroidDeviceIdentity.fromJson(values);
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  Future<AndroidLocationSample?> captureLocationSample() async {
+    try {
+      final values = await _channel.invokeMapMethod<String, dynamic>(
+        'captureLocationSample',
+      );
+
+      if (values == null || values.isEmpty) {
+        return null;
+      }
+
+      return AndroidLocationSample.fromJson(values);
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   Future<DeviceSecurityPosture> _requestPosture(String method) async {
     try {
       final values = await _channel.invokeMapMethod<String, dynamic>(method);
@@ -93,4 +125,72 @@ class DeviceSecurityPosture {
   final String locationPermissionStatus;
   final bool batteryOptimizationIgnored;
   final bool supported;
+}
+
+class AndroidDeviceIdentity {
+  const AndroidDeviceIdentity({
+    required this.name,
+    required this.model,
+    required this.platform,
+    required this.osVersion,
+  });
+
+  factory AndroidDeviceIdentity.fromJson(Map<String, dynamic> json) {
+    return AndroidDeviceIdentity(
+      name: json['name'] as String? ?? 'Android device',
+      model: json['model'] as String? ?? 'Android device',
+      platform: json['platform'] as String? ?? 'Android',
+      osVersion: json['osVersion'] as String? ?? 'Unknown',
+    );
+  }
+
+  final String name;
+  final String model;
+  final String platform;
+  final String osVersion;
+}
+
+class AndroidLocationSample {
+  const AndroidLocationSample({
+    required this.latitude,
+    required this.longitude,
+    required this.accuracyMeters,
+    required this.capturedAt,
+    required this.label,
+    required this.networkLabel,
+    required this.provider,
+  });
+
+  factory AndroidLocationSample.fromJson(Map<String, dynamic> json) {
+    return AndroidLocationSample(
+      latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+      accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble() ?? 0,
+      capturedAt:
+          DateTime.tryParse(json['capturedAt'] as String? ?? '')?.toUtc() ??
+          DateTime.now().toUtc(),
+      label: json['label'] as String? ?? 'Unknown location',
+      networkLabel: json['networkLabel'] as String? ?? 'Unknown network',
+      provider: json['provider'] as String? ?? 'android',
+    );
+  }
+
+  final double latitude;
+  final double longitude;
+  final double accuracyMeters;
+  final DateTime capturedAt;
+  final String label;
+  final String networkLabel;
+  final String provider;
+
+  Map<String, dynamic> toApiJson({required String source}) {
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      'accuracyMeters': accuracyMeters,
+      'lastKnownLocation': label,
+      'lastKnownNetwork': networkLabel,
+      'source': source,
+    };
+  }
 }

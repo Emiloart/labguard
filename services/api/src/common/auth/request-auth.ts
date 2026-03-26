@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-import { isAccessTokenValid } from '../mock/control-plane-data.js';
+import type { LabGuardActor } from './auth-types.js';
+import { authenticateAccessToken } from '../control-plane/control-plane-service.js';
 
 const publicRoutes = new Set<string>([
   'GET /v1/health',
@@ -9,7 +10,7 @@ const publicRoutes = new Set<string>([
   'POST /v1/auth/refresh',
 ]);
 
-export function requireLabGuardAuth(
+export async function requireLabGuardAuth(
   request: FastifyRequest,
   reply: FastifyReply,
 ) {
@@ -25,14 +26,27 @@ export function requireLabGuardAuth(
 
   const authorization = request.headers.authorization;
   const accessToken = extractBearerToken(authorization);
+  const actor = await authenticateAccessToken(accessToken);
 
-  if (!isAccessTokenValid(accessToken)) {
+  if (actor == null) {
     return reply.code(401).send({
       error: 'Unauthorized',
       message: 'A valid LabGuard access token is required.',
       requestId: request.id,
     });
   }
+
+  request.labguardActor = actor;
+}
+
+export function requireActor(request: FastifyRequest): LabGuardActor {
+  if (request.labguardActor == null) {
+    throw Object.assign(new Error('A valid LabGuard session is required.'), {
+      statusCode: 401,
+    });
+  }
+
+  return request.labguardActor;
 }
 
 function extractBearerToken(authorization?: string) {

@@ -1,76 +1,72 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
   getDeviceDetail,
   getDeviceLocationSnapshot,
+  type DevicePatchInput,
   listDevices,
-  markDeviceLostMode,
-  markDeviceRecovered,
+  markLostMode,
+  markRecovered,
+  type LocationPatchInput,
   recordDeviceLocation,
-  revokeDeviceAccess,
+  registerDevice,
+  revokeDevice,
   rotateDeviceCredentials,
   suspendDevice,
-  updateDeviceMetadata,
-} from '../../common/mock/control-plane-data.js';
+  updateDevice,
+  type DeviceRegistrationInput,
+} from '../../common/control-plane/control-plane-service.js';
 
 export class DevicesService {
-  listDevices() {
-    return listDevices();
+  listDevices(actor: LabGuardActor) {
+    return listDevices(actor);
   }
 
-  getDevice(deviceId: string) {
-    return getDeviceDetail(deviceId);
+  getDevice(actor: LabGuardActor, deviceId: string) {
+    return getDeviceDetail(actor, deviceId);
   }
 
-  getDeviceLocations(deviceId: string) {
-    return getDeviceLocationSnapshot(deviceId);
+  getDeviceLocations(actor: LabGuardActor, deviceId: string) {
+    return getDeviceLocationSnapshot(actor, deviceId);
   }
 
-  registerDevice() {
-    return {
-      deviceId: 'pending-device-id',
-      approvalState: 'PENDING_APPROVAL',
-      vpnProfileIssued: false,
-    };
+  registerDevice(actor: LabGuardActor, device: Partial<DeviceRegistrationInput>) {
+    return registerDevice(actor, device);
   }
 
   updateDevice(
+    actor: LabGuardActor,
     deviceId: string,
-    patch: Partial<{ name: string; isPrimary: boolean }>,
+    patch: DevicePatchInput,
   ) {
-    return updateDeviceMetadata(deviceId, patch);
+    return updateDevice(actor, deviceId, patch);
   }
 
-  markLostMode(deviceId: string) {
-    return markDeviceLostMode(deviceId);
+  markLostMode(actor: LabGuardActor, deviceId: string) {
+    return markLostMode(actor, deviceId);
   }
 
-  markRecovered(deviceId: string) {
-    return markDeviceRecovered(deviceId);
+  markRecovered(actor: LabGuardActor, deviceId: string) {
+    return markRecovered(actor, deviceId);
   }
 
-  revoke(deviceId: string) {
-    return revokeDeviceAccess(deviceId);
+  revoke(actor: LabGuardActor, deviceId: string) {
+    return revokeDevice(actor, deviceId);
   }
 
-  suspend(deviceId: string) {
-    return suspendDevice(deviceId);
+  suspend(actor: LabGuardActor, deviceId: string) {
+    return suspendDevice(actor, deviceId);
   }
 
-  rotateCredentials(deviceId: string) {
-    return rotateDeviceCredentials(deviceId);
+  rotateCredentials(actor: LabGuardActor, deviceId: string) {
+    return rotateDeviceCredentials(actor, deviceId);
   }
 
   recordLocation(
+    actor: LabGuardActor,
     deviceId: string,
-    patch: Partial<{
-      lastKnownLocation: string;
-      lastKnownNetwork: string;
-      lastKnownIp: string;
-      latitude: number;
-      longitude: number;
-      accuracyMeters: number;
-    }>,
+    patch: LocationPatchInput,
   ) {
-    return recordDeviceLocation(deviceId, patch);
+    return recordDeviceLocation(actor, deviceId, patch);
   }
 }
 

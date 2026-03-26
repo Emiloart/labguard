@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
 import Fastify, { type FastifyError } from 'fastify';
 
+import { ensureSeedData } from './common/control-plane/control-plane-service.js';
 import { requireLabGuardAuth } from './common/auth/request-auth.js';
 import { requestContextPlugin } from './common/plugins/request-context.js';
 import { env } from './config/env.js';
@@ -17,6 +18,8 @@ import { securityEventsRoutes } from './modules/security-events/security-events.
 import { vpnRoutes } from './modules/vpn/vpn.routes.js';
 
 export async function buildApp() {
+  await ensureSeedData();
+
   const app = Fastify({
     logger:
       env.NODE_ENV === 'development'

@@ -1,37 +1,39 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { requireActor } from '../../common/auth/request-auth.js';
 import { vpnService } from './vpn.service.js';
 
 export const vpnRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/servers', async () => {
+  app.get('/servers', async (request) => {
     return {
-      items: vpnService.listServers(),
+      items: await vpnService.listServers(requireActor(request)),
     };
   });
 
   app.get('/profiles/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
-    return vpnService.getProfile(params.deviceId);
+    return vpnService.getProfile(requireActor(request), params.deviceId);
   });
 
   app.get('/sessions/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
-    return vpnService.getSession(params.deviceId);
+    return vpnService.getSession(requireActor(request), params.deviceId);
   });
 
   app.post('/profiles/:deviceId/rotate', async (request) => {
     const params = request.params as { deviceId: string };
-    return vpnService.rotateProfile(params.deviceId);
+    return vpnService.rotateProfile(requireActor(request), params.deviceId);
   });
 
   app.post('/profiles/:deviceId/revoke', async (request) => {
     const params = request.params as { deviceId: string };
-    return vpnService.revokeProfile(params.deviceId);
+    return vpnService.revokeProfile(requireActor(request), params.deviceId);
   });
 
   app.post('/sessions/connect', async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const payload = {
+      actor: requireActor(request),
       ...(typeof body['deviceId'] == 'string'
         ? { deviceId: body['deviceId'] }
         : {}),
@@ -49,6 +51,7 @@ export const vpnRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sessions/disconnect', async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const payload = {
+      actor: requireActor(request),
       ...(typeof body['deviceId'] == 'string'
         ? { deviceId: body['deviceId'] }
         : {}),
@@ -61,6 +64,7 @@ export const vpnRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sessions/heartbeat', async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const payload = {
+      actor: requireActor(request),
       ...(typeof body['deviceId'] == 'string'
         ? { deviceId: body['deviceId'] }
         : {}),

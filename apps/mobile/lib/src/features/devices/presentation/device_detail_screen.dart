@@ -273,6 +273,87 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                       label: 'Recovery Message',
                     ),
                   ),
+                  FilledButton.tonal(
+                    onPressed: _busyAction == null
+                        ? () => _confirmRemoteCommand(
+                            title: 'Revoke VPN access?',
+                            message:
+                                'This removes the active VPN profile from the device and stops the tunnel immediately.',
+                            label: 'revoke vpn',
+                            commandType: RemoteCommandType.revokeVpn,
+                            successMessage: 'VPN revocation queued.',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'revoke vpn',
+                      label: 'Revoke VPN',
+                    ),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: _busyAction == null
+                        ? () => _confirmRemoteCommand(
+                            title: 'Rotate session?',
+                            message:
+                                'This device will be signed out and must authenticate again before access resumes.',
+                            label: 'rotate session',
+                            commandType: RemoteCommandType.rotateSession,
+                            successMessage: 'Session rotation queued.',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'rotate session',
+                      label: 'Rotate Session',
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _busyAction == null
+                        ? () => _confirmRemoteCommand(
+                            title: 'Wipe local app data?',
+                            message:
+                                'This clears locally stored LabGuard session, VPN, and recovery material on the device.',
+                            label: 'wipe app data',
+                            commandType: RemoteCommandType.wipeAppData,
+                            successMessage: 'App data wipe queued.',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'wipe app data',
+                      label: 'Wipe App Data',
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _busyAction == null
+                        ? () => _confirmRemoteCommand(
+                            title: 'Disable device access?',
+                            message:
+                                'This immediately disables trusted access and forces the device through reapproval before it can be used again.',
+                            label: 'disable access',
+                            commandType: RemoteCommandType.disableDeviceAccess,
+                            successMessage: 'Device-disable action queued.',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'disable access',
+                      label: 'Disable Access',
+                    ),
+                  ),
+                  if (device.isLost)
+                    OutlinedButton(
+                      onPressed: _busyAction == null
+                          ? () => _confirmRemoteCommand(
+                              title: 'Mark device recovered remotely?',
+                              message:
+                                  'This clears recovery messaging and lost-mode indicators on the device.',
+                              label: 'mark recovered',
+                              commandType: RemoteCommandType.markRecovered,
+                              successMessage: 'Recovery-clear action queued.',
+                            )
+                          : null,
+                      child: _ActionLabel(
+                        busy: _busyAction == 'mark recovered',
+                        label: 'Mark Recovered',
+                      ),
+                    ),
                 ],
               ),
               if (commandItems.isNotEmpty) ...[
@@ -429,6 +510,27 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               commandType: commandType,
               message: message,
             );
+        return null;
+      },
+      successMessage: successMessage,
+    );
+  }
+
+  Future<void> _confirmRemoteCommand({
+    required String title,
+    required String message,
+    required String label,
+    required RemoteCommandType commandType,
+    required String successMessage,
+  }) {
+    return _confirmAndRun(
+      title: title,
+      message: message,
+      label: label,
+      action: () async {
+        await ref
+            .read(remoteActionsControllerProvider)
+            .queueCommand(deviceId: widget.deviceId, commandType: commandType);
         return null;
       },
       successMessage: successMessage,

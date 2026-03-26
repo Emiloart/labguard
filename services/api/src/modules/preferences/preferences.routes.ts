@@ -1,13 +1,14 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { requireActor } from '../../common/auth/request-auth.js';
 import {
   type PreferencesPatch,
   preferencesService,
 } from './preferences.service.js';
 
 export const preferencesRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/me', async () => {
-    return preferencesService.getPreferences();
+  app.get('/me', async (request) => {
+    return preferencesService.getPreferences(requireActor(request));
   });
 
   app.patch('/me', async (request) => {
@@ -61,6 +62,18 @@ export const preferencesRoutes: FastifyPluginAsync = async (app) => {
         body['batteryOptimizationAcknowledged'];
     }
 
-    return preferencesService.updatePreferences(patch);
+    if (typeof body['appPin'] == 'string' || body['appPin'] == null) {
+      patch['appPin'] = body['appPin'] as string | null;
+    }
+
+    return preferencesService.updatePreferences(requireActor(request), patch);
+  });
+
+  app.post('/me/verify-pin', async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    return preferencesService.verifyAppPin(
+      requireActor(request),
+      typeof body['pin'] == 'string' ? body['pin'] : undefined,
+    );
   });
 };

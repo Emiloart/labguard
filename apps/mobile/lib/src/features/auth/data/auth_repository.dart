@@ -6,21 +6,28 @@ import '../../../core/network/labguard_api_client.dart';
 import '../domain/auth_session.dart';
 import '../domain/auth_state.dart';
 import 'auth_session_store.dart';
+import 'device_identity_repository.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
   return AuthRepository(
     client: ref.watch(labGuardApiClientProvider),
     sessionStore: ref.watch(authSessionStoreProvider),
+    deviceIdentityRepository: ref.watch(deviceIdentityRepositoryProvider),
   );
 });
 
 class AuthRepository {
-  AuthRepository({required Dio client, required AuthSessionStore sessionStore})
-    : _client = client,
-      _sessionStore = sessionStore;
+  AuthRepository({
+    required Dio client,
+    required AuthSessionStore sessionStore,
+    required DeviceIdentityRepository deviceIdentityRepository,
+  }) : _client = client,
+       _sessionStore = sessionStore,
+       _deviceIdentityRepository = deviceIdentityRepository;
 
   final Dio _client;
   final AuthSessionStore _sessionStore;
+  final DeviceIdentityRepository _deviceIdentityRepository;
 
   Future<AuthBootstrapResult> bootstrap() async {
     final onboardingComplete = await _sessionStore.isOnboardingComplete();
@@ -46,6 +53,8 @@ class AuthRepository {
     required String identity,
     String? inviteCode,
   }) async {
+    final device = await _deviceIdentityRepository.readCurrentDevice();
+
     try {
       final response = await _client.post<Map<String, dynamic>>(
         '/v1/auth/login',
@@ -53,6 +62,7 @@ class AuthRepository {
           'identity': identity,
           if (inviteCode != null && inviteCode.isNotEmpty)
             'inviteCode': inviteCode,
+          'device': device.toJson(),
         },
         options: Options(extra: const {'skipAuth': true}),
       );

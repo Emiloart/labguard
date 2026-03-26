@@ -1,50 +1,45 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
   listRemoteCommands,
   queueRemoteCommand,
+  type QueueRemoteCommandInput,
   retryRemoteCommand,
   reportRemoteCommandResult,
-} from '../../common/mock/control-plane-data.js';
+  type RemoteCommandResultInput,
+} from '../../common/control-plane/control-plane-service.js';
 
 export class RemoteActionsService {
   queueCommand(
+    actor: LabGuardActor,
     deviceId: string,
-    payload: Partial<{
-      commandType:
-        | 'SIGN_OUT'
-        | 'REVOKE_VPN'
-        | 'ROTATE_SESSION'
-        | 'WIPE_APP_DATA'
-        | 'RING_ALARM'
-        | 'SHOW_RECOVERY_MESSAGE'
-        | 'MARK_RECOVERED'
-        | 'DISABLE_DEVICE_ACCESS';
-      message: string;
-    }>,
+    payload: Partial<QueueRemoteCommandInput>,
   ) {
-    return queueRemoteCommand({
-      deviceId,
+    return queueRemoteCommand(actor, deviceId, {
       commandType: payload.commandType ?? 'RING_ALARM',
       ...(payload.message == null ? {} : { message: payload.message }),
     });
   }
 
-  listCommands(deviceId: string) {
-    return listRemoteCommands(deviceId);
+  listCommands(actor: LabGuardActor, deviceId: string) {
+    return listRemoteCommands(actor, deviceId);
   }
 
   reportResult(
+    actor: LabGuardActor,
     commandId: string,
-    payload: Partial<{
-      status: 'DELIVERED' | 'SUCCEEDED' | 'FAILED';
-      resultMessage: string;
-      failureCode: string;
-    }>,
+    payload: Partial<RemoteCommandResultInput>,
   ) {
-    return reportRemoteCommandResult(commandId, payload);
+    return reportRemoteCommandResult(actor, commandId, {
+      status: payload.status ?? 'SUCCEEDED',
+      ...(payload.resultMessage == null
+        ? {}
+        : { resultMessage: payload.resultMessage }),
+      ...(payload.failureCode == null ? {} : { failureCode: payload.failureCode }),
+    });
   }
 
-  retryCommand(commandId: string) {
-    return retryRemoteCommand(commandId);
+  retryCommand(actor: LabGuardActor, commandId: string) {
+    return retryRemoteCommand(actor, commandId);
   }
 }
 

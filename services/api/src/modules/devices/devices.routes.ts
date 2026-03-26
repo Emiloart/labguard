@@ -1,53 +1,43 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { requireActor } from '../../common/auth/request-auth.js';
 import { devicesService } from './devices.service.js';
 
 export const devicesRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/', async () => {
+  app.get('/', async (request) => {
     return {
-      items: devicesService.listDevices(),
+      items: await devicesService.listDevices(requireActor(request)),
     };
   });
 
-  app.post('/register', async () => {
-    return devicesService.registerDevice();
+  app.post('/register', async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    return devicesService.registerDevice(requireActor(request), {
+      ...(typeof body['clientId'] == 'string' ? { clientId: body['clientId'] } : {}),
+      ...(typeof body['name'] == 'string' ? { name: body['name'] } : {}),
+      ...(typeof body['model'] == 'string' ? { model: body['model'] } : {}),
+      ...(typeof body['platform'] == 'string' ? { platform: body['platform'] } : {}),
+      ...(typeof body['osVersion'] == 'string' ? { osVersion: body['osVersion'] } : {}),
+      ...(typeof body['appVersion'] == 'string' ? { appVersion: body['appVersion'] } : {}),
+    });
   });
 
-  app.get('/:deviceId', async (request, reply) => {
+  app.get('/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
-    const device = devicesService.getDevice(params.deviceId);
-
-    if (!device) {
-      return reply.code(404).send({
-        error: 'Not Found',
-        message: 'Device not found.',
-        requestId: request.id,
-      });
-    }
-
-    return device;
+    return devicesService.getDevice(requireActor(request), params.deviceId);
   });
 
-  app.get('/:deviceId/locations', async (request, reply) => {
+  app.get('/:deviceId/locations', async (request) => {
     const params = request.params as { deviceId: string };
-    const snapshot = devicesService.getDeviceLocations(params.deviceId);
-
-    if (!snapshot) {
-      return reply.code(404).send({
-        error: 'Not Found',
-        message: 'Device not found.',
-        requestId: request.id,
-      });
-    }
-
-    return snapshot;
+    return devicesService.getDeviceLocations(requireActor(request), params.deviceId);
   });
 
   app.patch('/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
 
-    return devicesService.updateDevice(params.deviceId, {
+    return devicesService.updateDevice(requireActor(request), params.deviceId, {
       ...(typeof body['name'] == 'string' ? { name: body['name'] } : {}),
       ...(typeof body['isPrimary'] == 'boolean'
         ? { isPrimary: body['isPrimary'] }
@@ -57,34 +47,34 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post('/:deviceId/revoke', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.revoke(params.deviceId);
+    return devicesService.revoke(requireActor(request), params.deviceId);
   });
 
   app.post('/:deviceId/suspend', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.suspend(params.deviceId);
+    return devicesService.suspend(requireActor(request), params.deviceId);
   });
 
   app.post('/:deviceId/rotate-credentials', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.rotateCredentials(params.deviceId);
+    return devicesService.rotateCredentials(requireActor(request), params.deviceId);
   });
 
   app.post('/:deviceId/lost-mode', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.markLostMode(params.deviceId);
+    return devicesService.markLostMode(requireActor(request), params.deviceId);
   });
 
   app.post('/:deviceId/recovered', async (request) => {
     const params = request.params as { deviceId: string };
-    return devicesService.markRecovered(params.deviceId);
+    return devicesService.markRecovered(requireActor(request), params.deviceId);
   });
 
   app.post('/:deviceId/location', async (request) => {
     const params = request.params as { deviceId: string };
     const body = (request.body ?? {}) as Record<string, unknown>;
 
-    return devicesService.recordLocation(params.deviceId, {
+    return devicesService.recordLocation(requireActor(request), params.deviceId, {
       ...(typeof body['lastKnownLocation'] == 'string'
         ? { lastKnownLocation: body['lastKnownLocation'] }
         : {}),
@@ -101,6 +91,7 @@ export const devicesRoutes: FastifyPluginAsync = async (app) => {
       ...(typeof body['accuracyMeters'] == 'number'
         ? { accuracyMeters: body['accuracyMeters'] }
         : {}),
+      ...(typeof body['source'] == 'string' ? { source: body['source'] } : {}),
     });
   });
 };

@@ -32,12 +32,18 @@ class SettingsRepository {
   }
 
   Future<SettingsBundle> updatePreferences(
-    SecurityPreferences preferences,
-  ) async {
+    SecurityPreferences preferences, {
+    String? appPin,
+    bool clearAppPin = false,
+  }) async {
     try {
       final response = await _client.patch<Map<String, dynamic>>(
         '/v1/preferences/me',
-        data: preferences.toJson(),
+        data: {
+          ...preferences.toJson(),
+          ...?(appPin == null ? null : {'appPin': appPin}),
+          if (clearAppPin) 'appPin': null,
+        },
       );
       final payload = response.data;
 

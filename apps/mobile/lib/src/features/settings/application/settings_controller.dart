@@ -20,8 +20,10 @@ class SettingsController extends AsyncNotifier<SettingsBundle> {
   }
 
   Future<void> updatePreferences(
-    SecurityPreferences Function(SecurityPreferences current) mutate,
-  ) async {
+    SecurityPreferences Function(SecurityPreferences current) mutate, {
+    String? appPin,
+    bool clearAppPin = false,
+  }) async {
     final current = state.valueOrNull;
 
     if (current == null) {
@@ -39,7 +41,11 @@ class SettingsController extends AsyncNotifier<SettingsBundle> {
     state = await AsyncValue.guard(
       () => ref
           .read(settingsRepositoryProvider)
-          .updatePreferences(optimistic.preferences),
+          .updatePreferences(
+            optimistic.preferences,
+            appPin: appPin,
+            clearAppPin: clearAppPin,
+          ),
     );
 
     final synchronized = state.valueOrNull;

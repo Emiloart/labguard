@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { requireActor } from '../../common/auth/request-auth.js';
 import { remoteActionsService } from './remote-actions.service.js';
 
 export const remoteActionsRoutes: FastifyPluginAsync = async (app) => {
@@ -43,13 +44,20 @@ export const remoteActionsRoutes: FastifyPluginAsync = async (app) => {
         : {}),
     };
 
-    return remoteActionsService.queueCommand(params.deviceId, payload);
+    return remoteActionsService.queueCommand(
+      requireActor(request),
+      params.deviceId,
+      payload,
+    );
   });
 
   app.get('/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
     return {
-      items: remoteActionsService.listCommands(params.deviceId),
+      items: await remoteActionsService.listCommands(
+        requireActor(request),
+        params.deviceId,
+      ),
     };
   });
 
@@ -74,11 +82,15 @@ export const remoteActionsRoutes: FastifyPluginAsync = async (app) => {
         : {}),
     };
 
-    return remoteActionsService.reportResult(params.commandId, payload);
+    return remoteActionsService.reportResult(
+      requireActor(request),
+      params.commandId,
+      payload,
+    );
   });
 
   app.post('/:commandId/retry', async (request) => {
     const params = request.params as { commandId: string };
-    return remoteActionsService.retryCommand(params.commandId);
+    return remoteActionsService.retryCommand(requireActor(request), params.commandId);
   });
 };

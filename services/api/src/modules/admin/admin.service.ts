@@ -1,30 +1,21 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
   getAdminOverview,
+  issueInvitation,
   listAuditLogs,
-  recordAuditLogEntry,
-} from '../../common/mock/control-plane-data.js';
+} from '../../common/control-plane/control-plane-service.js';
 
 export class AdminService {
-  getOverview() {
-    return getAdminOverview();
+  getOverview(actor: LabGuardActor) {
+    return getAdminOverview(actor);
   }
 
-  getAuditLogs() {
-    return listAuditLogs();
+  getAuditLogs(actor: LabGuardActor) {
+    return listAuditLogs(actor);
   }
 
-  issueInvitation() {
-    recordAuditLogEntry({
-      action: 'INVITATION_ISSUED',
-      targetType: 'AUTH',
-      targetId: 'invitation-manual-code',
-      summary: 'A new trusted invitation code was issued.',
-    });
-    return {
-      invitationId: 'inv-01',
-      status: 'PENDING',
-      deliveryMode: 'MANUAL_CODE',
-    };
+  issueInvitation(actor: LabGuardActor) {
+    return issueInvitation(actor);
   }
 }
 

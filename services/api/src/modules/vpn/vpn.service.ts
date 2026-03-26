@@ -1,48 +1,55 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
-  getVpnProfileSummary,
-  getVpnSessionSnapshot,
-  getVpnServers,
+  connectVpnSession,
+  getVpnProfile,
+  getVpnSession,
+  listVpnServers,
   recordVpnHeartbeat,
-  recordVpnSessionConnect,
-  recordVpnSessionDisconnect,
   revokeVpnProfile,
   rotateVpnProfile,
-} from '../../common/mock/control-plane-data.js';
+  disconnectVpnSession,
+} from '../../common/control-plane/control-plane-service.js';
 
 export class VpnService {
-  listServers() {
-    return getVpnServers();
+  listServers(actor: LabGuardActor) {
+    return listVpnServers(actor);
   }
 
-  getProfile(deviceId: string) {
-    return getVpnProfileSummary(deviceId);
+  getProfile(actor: LabGuardActor, deviceId: string) {
+    return getVpnProfile(actor, deviceId);
   }
 
-  getSession(deviceId: string) {
-    return getVpnSessionSnapshot(deviceId);
+  getSession(actor: LabGuardActor, deviceId: string) {
+    return getVpnSession(actor, deviceId);
   }
 
-  rotateProfile(deviceId: string) {
-    return rotateVpnProfile(deviceId);
+  rotateProfile(actor: LabGuardActor, deviceId: string) {
+    return rotateVpnProfile(actor, deviceId);
   }
 
-  revokeProfile(deviceId: string) {
-    return revokeVpnProfile(deviceId);
+  revokeProfile(actor: LabGuardActor, deviceId: string) {
+    return revokeVpnProfile(actor, deviceId);
   }
 
   connectSession(payload: {
+    actor: LabGuardActor;
     deviceId?: string;
     serverId?: string;
     currentIp?: string;
   }) {
-    return recordVpnSessionConnect(payload);
+    return connectVpnSession(payload.actor, payload);
   }
 
-  disconnectSession(payload: { deviceId?: string; reason?: string }) {
-    return recordVpnSessionDisconnect(payload);
+  disconnectSession(payload: {
+    actor: LabGuardActor;
+    deviceId?: string;
+    reason?: string;
+  }) {
+    return disconnectVpnSession(payload.actor, payload);
   }
 
   recordHeartbeat(payload: {
+    actor: LabGuardActor;
     deviceId?: string;
     serverId?: string;
     tunnelState?: string;
@@ -52,7 +59,7 @@ export class VpnService {
     lastHandshakeAt?: string;
     lastError?: string;
   }) {
-    return recordVpnHeartbeat(payload);
+    return recordVpnHeartbeat(payload.actor, payload);
   }
 }
 

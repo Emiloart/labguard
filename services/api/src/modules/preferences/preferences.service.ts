@@ -1,26 +1,24 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
   getPreferences,
+  type PreferencesPatchInput,
   updatePreferences,
-} from '../../common/mock/control-plane-data.js';
+  verifyAppPin,
+} from '../../common/control-plane/control-plane-service.js';
 
-export type PreferencesPatch = Partial<{
-  biometricEnabled: boolean;
-  pinLockEnabled: boolean;
-  autoConnectEnabled: boolean;
-  killSwitchEnabled: boolean;
-  notificationsEnabled: boolean;
-  telemetryLevel: 'minimal' | 'elevated_lost_mode_only';
-  locationPermissionStatus: 'not_requested' | 'granted_when_in_use';
-  batteryOptimizationAcknowledged: boolean;
-}>;
+export type PreferencesPatch = PreferencesPatchInput;
 
 export class PreferencesService {
-  getPreferences() {
-    return getPreferences();
+  getPreferences(actor: LabGuardActor) {
+    return getPreferences(actor);
   }
 
-  updatePreferences(patch: PreferencesPatch) {
-    return updatePreferences(patch);
+  updatePreferences(actor: LabGuardActor, patch: PreferencesPatch) {
+    return updatePreferences(actor, patch);
+  }
+
+  verifyAppPin(actor: LabGuardActor, pin?: string) {
+    return verifyAppPin(actor, pin);
   }
 }
 

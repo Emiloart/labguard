@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/config/app_environment.dart';
 import '../../../core/platform/android_system_security_bridge.dart';
+import '../../../core/security/app_lock_controller.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/screen_intro.dart';
@@ -184,10 +185,13 @@ class _SettingsContent extends ConsumerWidget {
             children: [
               SwitchListTile.adaptive(
                 value: preferences.biometricEnabled,
-                onChanged: (value) {
-                  controller.updatePreferences(
+                onChanged: (value) async {
+                  await controller.updatePreferences(
                     (current) => current.copyWith(biometricEnabled: value),
                   );
+                  if (value) {
+                    ref.read(appLockControllerProvider).lock();
+                  }
                 },
                 title: const Text('Biometric unlock'),
                 subtitle: const Text(
@@ -196,10 +200,8 @@ class _SettingsContent extends ConsumerWidget {
               ),
               SwitchListTile.adaptive(
                 value: preferences.pinLockEnabled,
-                onChanged: (value) {
-                  controller.updatePreferences(
-                    (current) => current.copyWith(pinLockEnabled: value),
-                  );
+                onChanged: (value) async {
+                  await _handlePinToggle(context, ref, controller, value);
                 },
                 title: const Text('App PIN'),
                 subtitle: const Text(
@@ -269,6 +271,91 @@ class _SettingsContent extends ConsumerWidget {
       ],
     );
   }
+}
+
+Future<void> _handlePinToggle(
+  BuildContext context,
+  WidgetRef ref,
+  SettingsController controller,
+  bool enabled,
+) async {
+  final appLockController = ref.read(appLockControllerProvider);
+
+  if (!enabled) {
+    await appLockController.clearPin();
+    await controller.updatePreferences(
+      (current) => current.copyWith(pinLockEnabled: false),
+      clearAppPin: true,
+    );
+    return;
+  }
+
+  final pin = await _promptForPin(context);
+  if (pin == null) {
+    return;
+  }
+
+  await appLockController.configurePin(pin);
+  await controller.updatePreferences(
+    (current) => current.copyWith(pinLockEnabled: true),
+    appPin: pin,
+  );
+  appLockController.lock();
+}
+
+Future<String?> _promptForPin(BuildContext context) async {
+  final pinController = TextEditingController();
+  final confirmController = TextEditingController();
+
+  final pin = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: LabGuardColors.panel,
+      title: const Text('Set App PIN'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: pinController,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'App PIN'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: confirmController,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Confirm PIN'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final pin = pinController.text.trim();
+            final confirmation = confirmController.text.trim();
+            if (pin.length < 4 || pin != confirmation) {
+              Navigator.of(context).pop('');
+              return;
+            }
+            Navigator.of(context).pop(pin);
+          },
+          child: const Text('Save PIN'),
+        ),
+      ],
+    ),
+  );
+
+  if (pin == null || pin.isEmpty) {
+    return null;
+  }
+
+  return pin;
 }
 
 class _DeviceSecurityPosturePanel extends StatelessWidget {

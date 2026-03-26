@@ -1,15 +1,16 @@
+import type { LabGuardActor } from '../../common/auth/auth-types.js';
 import {
   listSecurityEvents,
   markSecurityEventRead,
-} from '../../common/mock/control-plane-data.js';
+} from '../../common/control-plane/control-plane-service.js';
 
 export class SecurityEventsService {
-  listEvents() {
-    return listSecurityEvents();
+  listEvents(actor: LabGuardActor) {
+    return listSecurityEvents(actor);
   }
 
-  markRead(eventId: string) {
-    return markSecurityEventRead(eventId);
+  markRead(actor: LabGuardActor, eventId: string) {
+    return markSecurityEventRead(actor, eventId);
   }
 }
 

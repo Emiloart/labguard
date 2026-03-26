@@ -104,10 +104,9 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
               child: Stack(
                 children: [
                   Positioned.fill(
-                    child: CustomPaint(
-                      painter: _LocationMapPainter(
-                        items: locationSnapshot.items,
-                      ),
+                    child: _LocationBackdrop(
+                      currentLocation: currentLocation,
+                      items: locationSnapshot.items,
                     ),
                   ),
                   if (currentLocation != null)
@@ -357,6 +356,67 @@ class _BusyLabel extends StatelessWidget {
           const SizedBox(width: 8),
         ],
         Text(label),
+      ],
+    );
+  }
+}
+
+class _LocationBackdrop extends StatelessWidget {
+  const _LocationBackdrop({required this.currentLocation, required this.items});
+
+  final FindDeviceLocationRecord? currentLocation;
+  final List<FindDeviceLocationRecord> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (currentLocation == null) {
+      return CustomPaint(painter: _LocationMapPainter(items: items));
+    }
+
+    final mapUri = Uri.https('staticmap.openstreetmap.de', '/staticmap.php', {
+      'center':
+          '${currentLocation!.latitude.toStringAsFixed(6)},${currentLocation!.longitude.toStringAsFixed(6)}',
+      'zoom': '15',
+      'size': '900x520',
+      'markers':
+          '${currentLocation!.latitude.toStringAsFixed(6)},${currentLocation!.longitude.toStringAsFixed(6)},red-pushpin',
+    });
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.network(
+          mapUri.toString(),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return CustomPaint(painter: _LocationMapPainter(items: items));
+          },
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) {
+              return child;
+            }
+
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                CustomPaint(painter: _LocationMapPainter(items: items)),
+                const Center(child: CircularProgressIndicator()),
+              ],
+            );
+          },
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                LabGuardColors.background.withValues(alpha: 0.18),
+                LabGuardColors.background.withValues(alpha: 0.36),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }

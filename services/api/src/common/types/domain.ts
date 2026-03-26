@@ -20,7 +20,7 @@ export const remoteCommandTypes = [
   'RING_ALARM',
   'SHOW_RECOVERY_MESSAGE',
   'MARK_RECOVERED',
-  'DISABLE_DEVICE',
+  'DISABLE_DEVICE_ACCESS',
 ] as const;
 export const securityEventSeverities = ['INFO', 'WARNING', 'CRITICAL'] as const;
 

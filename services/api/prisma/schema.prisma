@@ -73,7 +73,7 @@ enum RemoteCommandType {
   RING_ALARM
   SHOW_RECOVERY_MESSAGE
   MARK_RECOVERED
-  DISABLE_DEVICE
+  DISABLE_DEVICE_ACCESS
 }
 
 enum RemoteCommandStatus {
@@ -169,7 +169,10 @@ model Invitation {
 model Session {
   id               String        @id @default(uuid()) @db.Uuid
   userId           String        @db.Uuid
+  deviceId         String        @db.Uuid
+  accessTokenHash  String        @unique
   refreshTokenHash String
+  accessTokenExpiresAt DateTime
   status           SessionStatus @default(ACTIVE)
   ipAddress        String?
   userAgent        String?
@@ -179,14 +182,17 @@ model Session {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device           Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
+  @@index([deviceId, status])
 }
 
 model Device {
   id                        String                   @id @default(uuid()) @db.Uuid
   accountId                 String                   @db.Uuid
   userId                    String?                  @db.Uuid
+  clientId                  String                   @unique
   name                      String
   model                     String
   platform                  String
@@ -209,6 +215,7 @@ model Device {
   updatedAt                 DateTime                 @updatedAt
   account                   Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   user                      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  authSessions              Session[]
   sessions                  DeviceSession[]
   vpnProfiles               VpnProfile[]
   locations                 DeviceLocation[]
@@ -223,6 +230,7 @@ model Device {
 model DeviceSession {
   id              String                   @id @default(uuid()) @db.Uuid
   deviceId        String                   @db.Uuid
+  serverId        String?                  @db.Uuid
   status          DeviceConnectivityStatus @default(UNKNOWN)
   publicIp        String?
   lastHeartbeatAt DateTime?
@@ -261,6 +269,7 @@ model VpnProfile {
   id                   String           @id @default(uuid()) @db.Uuid
   deviceId             String           @db.Uuid
   vpnServerId          String           @db.Uuid
+  revision             Int              @default(1)
   publicKey            String
   privateKeyEncrypted  String
   presharedKeyEncrypted String?
@@ -360,6 +369,7 @@ model AuditLog {
   action      String
   targetType  String
   targetId    String?
+  summary     String
   outcome     AuditOutcome
   requestId   String?
   ipAddress   String?
@@ -378,9 +388,13 @@ model UserPreference {
   userId               String   @unique @db.Uuid
   biometricEnabled     Boolean  @default(false)
   pinLockEnabled       Boolean  @default(false)
+  appPinHash           String?
   autoConnectEnabled   Boolean  @default(true)
   killSwitchEnabled    Boolean  @default(true)
+  notificationsEnabled Boolean  @default(true)
   telemetryLevel       String   @default("minimal")
+  locationPermissionStatus String @default("not_requested")
+  batteryOptimizationAcknowledged Boolean @default(false)
   notificationSettings Json?
   trustedWifiPolicies  Json?
   createdAt            DateTime @default(now())
