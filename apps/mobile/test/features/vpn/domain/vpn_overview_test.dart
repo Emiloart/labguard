@@ -42,6 +42,30 @@ void main() {
       expect(capabilities.killSwitchManagedBySystem, isTrue);
     });
 
+    test('parses server readiness metadata for region switching', () {
+      final server = VpnServerRecord.fromJson(const {
+        'id': 'vpn-uk-lon',
+        'name': 'UK — London',
+        'regionCode': 'uk-lon',
+        'locationLabel': 'London, United Kingdom',
+        'hostname': '',
+        'endpoint': '',
+        'port': 51820,
+        'status': 'DISABLED',
+        'isPrimary': true,
+        'selectable': false,
+        'availabilityState': 'not_configured',
+        'availabilityMessage':
+            'This region is reserved for this account but the live service is not configured yet.',
+        'exitIpAddress': '',
+        'dnsServers': ['1.1.1.1', '1.0.0.1'],
+      });
+
+      expect(server.selectable, isFalse);
+      expect(server.availabilityState, 'not_configured');
+      expect(server.availabilityMessage, contains('reserved'));
+    });
+
     test(
       'auto-connect helper only reconnects when policy and runtime permit',
       () {

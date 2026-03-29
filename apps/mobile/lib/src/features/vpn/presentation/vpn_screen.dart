@@ -267,7 +267,7 @@ class VpnScreen extends ConsumerWidget {
                       ? 'Select a live region once it becomes available.'
                       : selectedServer.selectable
                       ? '${selectedServer.locationLabel}\nReady for secure routing through this region.'
-                      : '${selectedServer.locationLabel}\nThis region is reserved but not live yet.',
+                      : '${selectedServer.locationLabel}\n${selectedServer.availabilityMessage}',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 if ((controlState.profile?.note ?? '').isNotEmpty) ...[
@@ -827,9 +827,7 @@ class _RegionButton extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  server.selectable
-                      ? 'Ready to route traffic through this exit region.'
-                      : 'This region will stay unavailable until the live service is ready.',
+                  server.availabilityMessage,
                   style: theme.textTheme.bodySmall,
                 ),
               ],

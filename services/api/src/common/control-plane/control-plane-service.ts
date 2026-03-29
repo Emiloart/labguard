@@ -3095,6 +3095,22 @@ function serializeVpnServerRecord(server: {
   }
 
   const configured = resolveConfiguredServerForRecord(server);
+  const availabilityState =
+    configured == null
+      ? 'not_configured'
+      : server.status == 'MAINTENANCE'
+      ? 'maintenance'
+      : server.status == 'ACTIVE'
+      ? 'ready'
+      : 'disabled';
+  const availabilityMessage =
+    availabilityState == 'ready'
+      ? 'Ready to route traffic through this exit region.'
+      : availabilityState == 'maintenance'
+      ? 'This region is temporarily unavailable while service maintenance is in progress.'
+      : availabilityState == 'disabled'
+      ? 'This region is currently unavailable for this account.'
+      : 'This region is reserved for this account but the live service is not configured yet.';
 
   return {
     id: server.id,
@@ -3107,6 +3123,8 @@ function serializeVpnServerRecord(server: {
     status: configured == null ? 'DISABLED' : server.status,
     isPrimary: server.isPrimary,
     selectable: configured != null && server.status == 'ACTIVE',
+    availabilityState,
+    availabilityMessage,
     exitIpAddress: configured?.exitIpAddress ?? '',
     dnsServers: configured?.dnsServers ?? parseDnsServers(declared.dnsServers),
   };

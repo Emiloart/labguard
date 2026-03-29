@@ -44,6 +44,8 @@ class VpnServerRecord {
     required this.status,
     required this.isPrimary,
     required this.selectable,
+    required this.availabilityState,
+    required this.availabilityMessage,
     required this.exitIpAddress,
     required this.dnsServers,
   });
@@ -62,6 +64,11 @@ class VpnServerRecord {
       status: json['status'] as String? ?? 'UNKNOWN',
       isPrimary: json['isPrimary'] as bool? ?? false,
       selectable: json['selectable'] as bool? ?? false,
+      availabilityState:
+          json['availabilityState'] as String? ?? 'not_configured',
+      availabilityMessage:
+          json['availabilityMessage'] as String? ??
+          'This region is not ready yet.',
       exitIpAddress: json['exitIpAddress'] as String? ?? '',
       dnsServers: rawDnsServers.whereType<String>().toList(growable: false),
     );
@@ -77,6 +84,8 @@ class VpnServerRecord {
   final String status;
   final bool isPrimary;
   final bool selectable;
+  final String availabilityState;
+  final String availabilityMessage;
   final String exitIpAddress;
   final List<String> dnsServers;
 

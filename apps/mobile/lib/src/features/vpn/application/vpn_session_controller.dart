@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/api_exception.dart';
 import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
 import '../../../core/security/secure_store.dart';
@@ -331,6 +332,7 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
 
     try {
       final deviceId = _currentDeviceId();
+      await _ensureInstalledProfile(deviceId);
       final nativeStatus = await ref.read(androidVpnBridgeProvider).connect();
       final remoteSession = await ref
           .read(vpnRepositoryProvider)
@@ -428,8 +430,8 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
         ? profile!
         : await ref.read(vpnRepositoryProvider).fetchProfile(deviceId);
     if (!freshProfile.hasConfig) {
-      throw StateError(
-        'No production-ready VPN region is available for this device.',
+      throw const ApiException(
+        'No live VPN region is ready for this device yet.',
       );
     }
     await _persistProfile(freshProfile);
@@ -440,8 +442,8 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     VpnProfileBundle profile,
   ) async {
     if (!profile.hasConfig) {
-      throw StateError(
-        'The current VPN profile is missing WireGuard config data.',
+      throw const ApiException(
+        'The current VPN profile is incomplete. Refresh the region profile and try again.',
       );
     }
 

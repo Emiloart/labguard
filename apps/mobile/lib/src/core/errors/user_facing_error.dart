@@ -49,7 +49,8 @@ String userFacingErrorMessage(
   }
 
   if (lower.contains('no production-ready vpn region') ||
-      lower.contains('vpn infrastructure unavailable')) {
+      lower.contains('vpn infrastructure unavailable') ||
+      lower.contains('no live vpn region')) {
     return 'VPN regions are not ready for this account yet.';
   }
 
