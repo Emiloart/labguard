@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/app_metrics.dart';
+import '../../../core/widgets/app_feedback.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../application/auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -35,9 +38,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.listen(authControllerProvider, (previous, next) {
       if (next.errorMessage != null &&
           next.errorMessage != previous?.errorMessage) {
-        ScaffoldMessenger.of(
+        showAppSnackBar(
           context,
-        ).showSnackBar(SnackBar(content: Text(next.errorMessage!)));
+          message: next.errorMessage!,
+          tone: AppFeedbackTone.warning,
+        );
         ref.read(authControllerProvider.notifier).clearError();
       }
     });
@@ -47,32 +52,39 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+          padding: AppMetrics.pagePaddingWide,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const BrandLockup(),
+              const BrandLockup(compact: true),
               const SizedBox(height: 28),
-              Text(
-                'Secure access for trusted LabGuard members.',
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Owner and invited users authenticate here, register the device, and receive approved access to VPN and security actions.',
-                style: Theme.of(context).textTheme.bodyMedium,
+              const ScreenIntro(
+                eyebrow: 'Trusted Access',
+                title: 'Sign in to LabGuard',
+                description:
+                    'Use an approved account to open this device and resume protected controls.',
+                badge: 'BUILT BY EMILO LABS',
               ),
               const SizedBox(height: 28),
               AppPanel(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text(
+                      'Access details',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 18),
                     const Text('Email or handle'),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: _identityController,
-                      decoration: InputDecoration(
-                        hintText: 'owner@emilolabs.com',
+                    AutofillGroup(
+                      child: TextField(
+                        controller: _identityController,
+                        autofillHints: const [AutofillHints.username],
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          hintText: 'owner@emilolabs.com',
+                        ),
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -80,7 +92,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _inviteCodeController,
-                      decoration: InputDecoration(
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(
                         hintText: 'Optional trusted invite code',
                       ),
                     ),
@@ -99,11 +112,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               inviteCode: _inviteCodeController.text.trim(),
                             );
                       },
-                child: Text(
-                  authState.isBusy
-                      ? 'Approving Device...'
-                      : 'Approve Device and Continue',
-                ),
+                child: Text(authState.isBusy ? 'Signing in...' : 'Continue'),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
@@ -114,7 +123,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             .read(authControllerProvider.notifier)
                             .restoreTrustedSession();
                       },
-                child: const Text('Use Existing Trusted Session'),
+                child: const Text('Restore trusted session'),
               ),
             ],
           ),

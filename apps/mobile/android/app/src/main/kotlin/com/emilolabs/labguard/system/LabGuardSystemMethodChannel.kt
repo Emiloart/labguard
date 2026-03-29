@@ -144,7 +144,10 @@ private class LabGuardSystemMethodCallHandler(
 
         val provider = preferredLocationProvider(locationManager)
         if (provider == null) {
-            result.success(bestKnownLocation(locationManager)?.let(::buildLocationSample) ?: emptyMap())
+            result.success(
+                bestKnownLocation(locationManager)?.let(::buildLocationSample)
+                    ?: emptyMap<String, Any>(),
+            )
             return
         }
 
@@ -169,7 +172,10 @@ private class LabGuardSystemMethodCallHandler(
             return
         }
 
-        result.success(bestKnownLocation(locationManager)?.let(::buildLocationSample) ?: emptyMap())
+        result.success(
+            bestKnownLocation(locationManager)?.let(::buildLocationSample)
+                ?: emptyMap<String, Any>(),
+        )
     }
 
     private fun buildSecurityPosture(): Map<String, Any> {

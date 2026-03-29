@@ -3,8 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/security/high_risk_action_guard.dart';
+import '../../../core/theme/app_metrics.dart';
+import '../../../core/widgets/app_feedback.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/panel_header.dart';
+import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../remote_actions/application/remote_actions_provider.dart';
@@ -31,8 +36,14 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
 
     if (detail.isLoading || commands.isLoading) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
-        children: const [LoadingPanel(label: 'Loading device detail')],
+        padding: AppMetrics.pagePadding,
+        children: const [
+          LoadingPanel(
+            label: 'Loading device detail',
+            message:
+                'Preparing trust posture, recovery state, and recent command history.',
+          ),
+        ],
       );
     }
 
@@ -41,7 +52,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     if (firstError != null &&
         (detail.valueOrNull == null || commands.valueOrNull == null)) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        padding: AppMetrics.pagePadding,
         children: [
           ErrorPanel(
             message: firstError.toString(),
@@ -59,34 +70,52 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     final dateFormat = DateFormat('MMM d, yyyy • HH:mm');
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+      padding: AppMetrics.pagePadding,
       children: [
         Row(
           children: [
             IconButton(
               onPressed: () => context.go('/devices'),
+              tooltip: 'Back to devices',
               icon: const Icon(Icons.arrow_back),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 device.name,
-                style: Theme.of(context).textTheme.headlineMedium,
+                style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
             IconButton(
               onPressed: _busyAction == null
                   ? () => _renameDevice(context, device)
                   : null,
+              tooltip: 'Rename device',
               icon: const Icon(Icons.edit_outlined),
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
+        ScreenIntro(
+          eyebrow: 'Device Control',
+          title: device.name,
+          description:
+              '${device.model} • ${device.platform}. Review trust posture, recovery state, and remote command activity for this device.',
+          badge: device.isLost
+              ? 'LOST MODE'
+              : _trustLabel(device.trustState).toUpperCase(),
+        ),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const PanelHeader(
+                title: 'Device State',
+                subtitle:
+                    'Trusted identity, connectivity posture, and the most recent recovery metadata for this device.',
+              ),
+              const SizedBox(height: AppMetrics.contentGap),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -108,7 +137,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                     ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: AppMetrics.contentGap),
               _DetailRow(label: 'Model', value: device.model),
               _DetailRow(label: 'Platform', value: device.platform),
               _DetailRow(label: 'App version', value: device.appVersion),
@@ -134,16 +163,17 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Security Controls',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Recovery & Access',
+                subtitle:
+                    'Use these controls for recovery operations and routine access hygiene without revoking the device outright.',
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: AppMetrics.contentGap),
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -158,6 +188,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                     onPressed: _busyAction == null
                         ? () => _runDeviceAction(
                             label: 'rotate credentials',
+                            requireAuthorization: true,
                             action: () => ref
                                 .read(deviceActionsControllerProvider)
                                 .rotateCredentials(device.id),
@@ -167,88 +198,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'rotate credentials',
-                      label: 'Rotate Credentials',
-                    ),
-                  ),
-                  OutlinedButton(
-                    onPressed: _busyAction == null
-                        ? () => _confirmAndRun(
-                            title: 'Suspend device?',
-                            message:
-                                'Suspending the device immediately pauses trusted access until you reapprove it.',
-                            label: 'suspend device',
-                            action: () => ref
-                                .read(deviceActionsControllerProvider)
-                                .suspendDevice(device.id),
-                            successMessage: 'Device suspended.',
-                          )
-                        : null,
-                    child: _ActionLabel(
-                      busy: _busyAction == 'suspend device',
-                      label: 'Suspend Device',
-                    ),
-                  ),
-                  OutlinedButton(
-                    onPressed: _busyAction == null
-                        ? () => _confirmAndRun(
-                            title: 'Revoke device access?',
-                            message:
-                                'This revokes device trust and VPN access. The device will require a fresh approval path.',
-                            label: 'revoke device',
-                            action: () => ref
-                                .read(deviceActionsControllerProvider)
-                                .revokeDevice(device.id),
-                            successMessage: 'Device access revoked.',
-                          )
-                        : null,
-                    child: _ActionLabel(
-                      busy: _busyAction == 'revoke device',
-                      label: 'Revoke Device',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        AppPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Remote Commands',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 18),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _busyAction == null
-                      ? () => ref.invalidate(
-                          remoteCommandsProvider(widget.deviceId),
-                        )
-                      : null,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  FilledButton(
-                    onPressed: _busyAction == null
-                        ? () => _runRemoteCommand(
-                            label: 'ring alarm',
-                            commandType: RemoteCommandType.ringAlarm,
-                            successMessage: 'Ring/alarm command queued.',
-                          )
-                        : null,
-                    child: _ActionLabel(
-                      busy: _busyAction == 'ring alarm',
-                      label: 'Ring Alarm',
+                      label: 'Rotate credentials',
                     ),
                   ),
                   FilledButton(
@@ -261,16 +211,106 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'remote sign out',
-                      label: 'Remote Sign Out',
+                      label: 'Remote sign out',
                     ),
                   ),
                   FilledButton(
+                    onPressed: _busyAction == null
+                        ? () => _confirmRemoteCommand(
+                            title: 'Rotate session?',
+                            message:
+                                'This device will be signed out and must authenticate again before access resumes.',
+                            label: 'rotate session',
+                            commandType: RemoteCommandType.rotateSession,
+                            successMessage: 'Session rotation queued.',
+                            confirmLabel: 'Rotate session',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'rotate session',
+                      label: 'Rotate session',
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: _busyAction == null
+                        ? () => _runRemoteCommand(
+                            label: 'ring alarm',
+                            commandType: RemoteCommandType.ringAlarm,
+                            successMessage: 'Ring/alarm command queued.',
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'ring alarm',
+                      label: 'Ring alarm',
+                    ),
+                  ),
+                  FilledButton.tonal(
                     onPressed: _busyAction == null
                         ? () => _sendRecoveryMessage()
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'recovery message',
-                      label: 'Recovery Message',
+                      label: 'Recovery message',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppMetrics.sectionGap),
+        AppPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const PanelHeader(
+                title: 'Restricted Actions',
+                subtitle:
+                    'High-impact controls are separated here so destructive actions remain deliberate and clearly confirmed.',
+              ),
+              const SizedBox(height: AppMetrics.contentGap),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  OutlinedButton(
+                    onPressed: _busyAction == null
+                        ? () => _confirmAndRun(
+                            title: 'Suspend device access?',
+                            message:
+                                'Suspending this device immediately pauses trusted access until an operator reapproves it.',
+                            label: 'suspend device',
+                            action: () => ref
+                                .read(deviceActionsControllerProvider)
+                                .suspendDevice(device.id),
+                            successMessage: 'Device suspended.',
+                            confirmLabel: 'Suspend device',
+                            requireAuthorization: true,
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'suspend device',
+                      label: 'Suspend device',
+                    ),
+                  ),
+                  OutlinedButton(
+                    onPressed: _busyAction == null
+                        ? () => _confirmAndRun(
+                            title: 'Revoke device access?',
+                            message:
+                                'This revokes device trust and VPN access. The device will require a fresh approval flow before it can be used again.',
+                            label: 'revoke device',
+                            action: () => ref
+                                .read(deviceActionsControllerProvider)
+                                .revokeDevice(device.id),
+                            successMessage: 'Device access revoked.',
+                            confirmLabel: 'Revoke access',
+                            requireAuthorization: true,
+                          )
+                        : null,
+                    child: _ActionLabel(
+                      busy: _busyAction == 'revoke device',
+                      label: 'Revoke device',
                     ),
                   ),
                   FilledButton.tonal(
@@ -282,27 +322,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                             label: 'revoke vpn',
                             commandType: RemoteCommandType.revokeVpn,
                             successMessage: 'VPN revocation queued.',
+                            confirmLabel: 'Revoke VPN',
                           )
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'revoke vpn',
                       label: 'Revoke VPN',
-                    ),
-                  ),
-                  FilledButton.tonal(
-                    onPressed: _busyAction == null
-                        ? () => _confirmRemoteCommand(
-                            title: 'Rotate session?',
-                            message:
-                                'This device will be signed out and must authenticate again before access resumes.',
-                            label: 'rotate session',
-                            commandType: RemoteCommandType.rotateSession,
-                            successMessage: 'Session rotation queued.',
-                          )
-                        : null,
-                    child: _ActionLabel(
-                      busy: _busyAction == 'rotate session',
-                      label: 'Rotate Session',
                     ),
                   ),
                   OutlinedButton(
@@ -314,11 +339,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                             label: 'wipe app data',
                             commandType: RemoteCommandType.wipeAppData,
                             successMessage: 'App data wipe queued.',
+                            confirmLabel: 'Wipe data',
                           )
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'wipe app data',
-                      label: 'Wipe App Data',
+                      label: 'Wipe app data',
                     ),
                   ),
                   OutlinedButton(
@@ -330,11 +356,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                             label: 'disable access',
                             commandType: RemoteCommandType.disableDeviceAccess,
                             successMessage: 'Device-disable action queued.',
+                            confirmLabel: 'Disable access',
                           )
                         : null,
                     child: _ActionLabel(
                       busy: _busyAction == 'disable access',
-                      label: 'Disable Access',
+                      label: 'Disable access',
                     ),
                   ),
                   if (device.isLost)
@@ -347,17 +374,47 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                               label: 'mark recovered',
                               commandType: RemoteCommandType.markRecovered,
                               successMessage: 'Recovery-clear action queued.',
+                              confirmLabel: 'Mark recovered',
                             )
                           : null,
                       child: _ActionLabel(
                         busy: _busyAction == 'mark recovered',
-                        label: 'Mark Recovered',
+                        label: 'Mark recovered',
                       ),
                     ),
                 ],
               ),
-              if (commandItems.isNotEmpty) ...[
-                const SizedBox(height: 18),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppMetrics.sectionGap),
+        AppPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              PanelHeader(
+                title: 'Remote Command History',
+                subtitle:
+                    'Queued, delivered, and failed remote actions are recorded here with retry status.',
+                trailing: TextButton.icon(
+                  onPressed: _busyAction == null
+                      ? () => ref.invalidate(
+                          remoteCommandsProvider(widget.deviceId),
+                        )
+                      : null,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
+                ),
+              ),
+              const SizedBox(height: AppMetrics.contentGap),
+              if (commandItems.isEmpty)
+                const EmptyPanel(
+                  title: 'No remote commands recorded',
+                  message:
+                      'Commands issued against this device will appear here with queue, delivery, and completion state.',
+                  icon: Icons.history_toggle_off_outlined,
+                )
+              else
                 for (final command in commandItems) ...[
                   _CommandRow(
                     command: command,
@@ -369,31 +426,33 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                   ),
                   if (command != commandItems.last) const SizedBox(height: 12),
                 ],
-              ] else ...[
-                const SizedBox(height: 18),
-                Text(
-                  'No remote commands have been issued for this device yet.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Security History',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Security History',
+                subtitle:
+                    'Local trust changes, recovery transitions, and device activity milestones remain visible here.',
               ),
-              const SizedBox(height: 18),
-              for (final entry in device.securityHistory) ...[
-                _HistoryRow(entry: entry),
-                if (entry != device.securityHistory.last)
-                  const SizedBox(height: 14),
-              ],
+              const SizedBox(height: AppMetrics.contentGap),
+              if (device.securityHistory.isEmpty)
+                const EmptyPanel(
+                  title: 'No security history is available yet',
+                  message:
+                      'Trust changes and recovery milestones will appear here as the device state evolves.',
+                  icon: Icons.shield_outlined,
+                )
+              else
+                for (final entry in device.securityHistory) ...[
+                  _HistoryRow(entry: entry),
+                  if (entry != device.securityHistory.last)
+                    const SizedBox(height: 14),
+                ],
             ],
           ),
         ),
@@ -448,6 +507,8 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required Future<Object?> Function() action,
     required String successMessage,
+    String confirmLabel = 'Continue',
+    bool requireAuthorization = false,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -462,7 +523,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Confirm'),
+            child: Text(confirmLabel),
           ),
         ],
       ),
@@ -474,6 +535,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
 
     await _runAction(
       label: label,
+      requireAuthorization: requireAuthorization,
       action: action,
       successMessage: successMessage,
     );
@@ -483,9 +545,11 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required Future<DeviceDetailRecord> Function() action,
     required String successMessage,
+    bool requireAuthorization = false,
   }) {
     return _runAction(
       label: label,
+      requireAuthorization: requireAuthorization,
       action: () async {
         await action();
         return null;
@@ -502,6 +566,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   }) {
     return _runAction(
       label: label,
+      requireAuthorization: true,
       action: () async {
         await ref
             .read(remoteActionsControllerProvider)
@@ -522,11 +587,13 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required RemoteCommandType commandType,
     required String successMessage,
+    String confirmLabel = 'Continue',
   }) {
     return _confirmAndRun(
       title: title,
       message: message,
       label: label,
+      confirmLabel: confirmLabel,
       action: () async {
         await ref
             .read(remoteActionsControllerProvider)
@@ -540,6 +607,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   Future<void> _retryRemoteCommand(RemoteCommandRecord command) {
     return _runAction(
       label: 'retry ${command.commandId}',
+      requireAuthorization: true,
       action: () async {
         await ref
             .read(remoteActionsControllerProvider)
@@ -556,7 +624,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   Future<void> _sendRecoveryMessage() async {
     final controller = TextEditingController(
       text:
-          'LabGuard owner is attempting recovery. Please call the number shown.',
+          'This device is being recovered. Follow the owner instructions shown on screen.',
     );
     final message = await showDialog<String>(
       context: context,
@@ -600,7 +668,15 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required Future<Object?> Function() action,
     required String successMessage,
+    bool requireAuthorization = false,
   }) async {
+    if (requireAuthorization) {
+      final authorized = await _authorizeSensitiveAction(label);
+      if (!authorized) {
+        return;
+      }
+    }
+
     setState(() {
       _busyAction = label;
     });
@@ -611,17 +687,21 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
         return;
       }
 
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+        message: successMessage,
+        tone: AppFeedbackTone.success,
+      );
     } catch (error) {
       if (!mounted) {
         return;
       }
 
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+        message: describeError(error),
+        tone: AppFeedbackTone.warning,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -629,6 +709,16 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
         });
       }
     }
+  }
+
+  Future<bool> _authorizeSensitiveAction(String actionLabel) {
+    final normalizedLabel = actionLabel.trim();
+    return authorizeHighRiskAction(
+      context,
+      ref,
+      biometricReason: 'Approve $normalizedLabel in LabGuard.',
+      pinPrompt: 'Enter your app PIN to continue with $normalizedLabel.',
+    );
   }
 
   String _trustLabel(DeviceTrustState trustState) {

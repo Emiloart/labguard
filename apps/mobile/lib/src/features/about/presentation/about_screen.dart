@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/config/app_environment.dart';
+import '../../../core/theme/app_metrics.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
+import '../../../core/widgets/panel_header.dart';
 import '../../../core/widgets/screen_intro.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -10,101 +12,75 @@ class AboutScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final versionParts = AppEnvironment.appVersion.split('+');
+    final releaseVersion = versionParts.first;
+    final buildNumber = versionParts.length > 1 ? versionParts.last : '1';
+
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+      padding: AppMetrics.pagePadding,
       children: [
         const BrandLockup(compact: true),
         const SizedBox(height: 20),
         ScreenIntro(
           eyebrow: AppEnvironment.brandAttribution,
-          title: 'About LabGuard',
+          title: 'LabGuard',
           description:
-              'LabGuard is a private Android-first security suite for trusted operators and approved devices only.',
+              'Private infrastructure control for trusted devices. Android-first. Built by Emilo Labs.',
           badge: AppEnvironment.releaseTrack.toUpperCase(),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Build Identity',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Build Identity',
+                subtitle: 'Version details for the current LabGuard build.',
               ),
               const SizedBox(height: 14),
-              _AboutDetailRow(
-                label: 'Version',
-                value: AppEnvironment.appVersion,
-              ),
-              _AboutDetailRow(
-                label: 'Environment',
-                value: AppEnvironment.environment,
-              ),
-              _AboutDetailRow(
-                label: 'Release track',
-                value: AppEnvironment.releaseTrack,
-              ),
-              _AboutDetailRow(
-                label: 'API base',
-                value: AppEnvironment.apiBaseUrl,
+              _AboutDetailRow(label: 'Product', value: AppEnvironment.appName),
+              _AboutDetailRow(label: 'Version', value: releaseVersion),
+              _AboutDetailRow(label: 'Build', value: buildNumber),
+              const _AboutDetailRow(
+                label: 'Platform',
+                value: 'Android-first Flutter client',
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Operational Scope',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Operational Scope',
+                subtitle:
+                    'LabGuard is built for a small trusted fleet, not a public VPN audience.',
               ),
               const SizedBox(height: 14),
               const _CapabilityLine(
-                title: 'WireGuard tunnel control',
+                title: 'Private tunnel',
                 body:
-                    'Per-device profile handling, Android VPN permission control, foreground runtime service, and reconnect policy.',
+                    'Protected access for approved devices with clear connect, disconnect, and recovery controls.',
               ),
               const SizedBox(height: 12),
               const _CapabilityLine(
-                title: 'Trusted device registry',
+                title: 'Trusted devices',
                 body:
-                    'Device approval state, last activity, VPN posture, recovery state, and per-device revocation workflows.',
+                    'Review device trust, recent activity, and recovery state in one place.',
               ),
               const SizedBox(height: 12),
               const _CapabilityLine(
-                title: 'Explicit recovery operations',
+                title: 'Recovery',
                 body:
-                    'Lost mode, last-known location, recovery messaging, alarm requests, and remote security actions remain operator-visible and auditable.',
+                    'Lost mode, location refresh, recovery messaging, and remote actions stay visible and deliberate.',
               ),
               const SizedBox(height: 12),
               const _CapabilityLine(
-                title: 'Security-first control plane',
+                title: 'Account protection',
                 body:
-                    'Token/session rotation, audit logs, remote command lifecycle tracking, and policy-driven runtime posture checks.',
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        AppPanel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Release Readiness',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'This repository is prepared for an internal trusted-user release, but the control plane still includes mock data modules for provisioning and command state. Replace those modules with persistent production services before any external rollout.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'See the repository release playbook for verification gates, Android signing steps, VPN validation, and rollback procedure.',
-                style: Theme.of(context).textTheme.bodySmall,
+                    'Sign-in, approvals, and remote actions are designed for a small trusted operator group.',
               ),
             ],
           ),

@@ -115,6 +115,7 @@ class FindDeviceController {
   FindDeviceController(this._ref);
 
   final Ref _ref;
+  DateTime? _lastLostModeSyncAt;
 
   Future<FindDeviceSnapshot> requestFreshLocation(String deviceId) async {
     final snapshot = await _ref
@@ -125,6 +126,12 @@ class FindDeviceController {
   }
 
   Future<void> syncCurrentDeviceLocationIfLostModeActive() async {
+    final now = DateTime.now();
+    if (_lastLostModeSyncAt != null &&
+        now.difference(_lastLostModeSyncAt!) < const Duration(minutes: 2)) {
+      return;
+    }
+
     final session = _ref.read(authControllerProvider).session;
     if (session == null) {
       return;
@@ -141,6 +148,7 @@ class FindDeviceController {
     await _ref
         .read(findDeviceRepositoryProvider)
         .syncLostModeLocation(device.id);
+    _lastLostModeSyncAt = now;
     _invalidate(device.id);
   }
 

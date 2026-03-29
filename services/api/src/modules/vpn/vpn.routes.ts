@@ -15,6 +15,17 @@ export const vpnRoutes: FastifyPluginAsync = async (app) => {
     return vpnService.getProfile(requireActor(request), params.deviceId);
   });
 
+  app.post('/profiles/:deviceId/select-server', async (request) => {
+    const params = request.params as { deviceId: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const serverId = typeof body['serverId'] == 'string' ? body['serverId'] : '';
+
+    return vpnService.selectServer(requireActor(request), {
+      deviceId: params.deviceId,
+      serverId,
+    });
+  });
+
   app.get('/sessions/:deviceId', async (request) => {
     const params = request.params as { deviceId: string };
     return vpnService.getSession(requireActor(request), params.deviceId);
@@ -42,6 +53,13 @@ export const vpnRoutes: FastifyPluginAsync = async (app) => {
         : {}),
       ...(typeof body['currentIp'] == 'string'
         ? { currentIp: body['currentIp'] }
+        : {}),
+      observedIp: request.ip,
+      ...(typeof body['lastHandshakeAt'] == 'string'
+        ? { lastHandshakeAt: body['lastHandshakeAt'] }
+        : {}),
+      ...(typeof body['lastError'] == 'string'
+        ? { lastError: body['lastError'] }
         : {}),
     };
 
@@ -77,6 +95,7 @@ export const vpnRoutes: FastifyPluginAsync = async (app) => {
       ...(typeof body['currentIp'] == 'string'
         ? { currentIp: body['currentIp'] }
         : {}),
+      observedIp: request.ip,
       ...(typeof body['bytesReceived'] == 'number'
         ? { bytesReceived: body['bytesReceived'] }
         : {}),

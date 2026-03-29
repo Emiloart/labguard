@@ -51,22 +51,34 @@ class LabGuardVpnManager private constructor(
             secureStateStore.readRuntimePreferences() ?: defaultRuntimePreferences()
         val profile = installedProfile
         val permissionGranted = VpnService.prepare(permissionContext) == null
-        val tunnelState = when {
-            profile == null -> "PROFILE_MISSING"
-            currentTunnelState() == Tunnel.State.UP -> "CONNECTED"
-            !permissionGranted -> "AUTH_REQUIRED"
-            lastError != null -> "ERROR"
-            else -> "DISCONNECTED"
-        }
         val statistics = activeStatistics()
         val latestHandshake = latestHandshake(statistics)
+        val tunnelState = when {
+            profile == null -> "PROFILE_MISSING"
+            !permissionGranted -> "AUTH_REQUIRED"
+            currentTunnelState() != Tunnel.State.UP -> if (lastError != null) "ERROR" else "DISCONNECTED"
+            latestHandshake != null && isRecentHandshake(latestHandshake) -> "CONNECTED"
+            connectedAtEpochMillis != null && withinHandshakeGracePeriod() -> "CONNECTING"
+            else -> "ERROR"
+        }
+        val statusError =
+            when {
+                tunnelState == "CONNECTED" || tunnelState == "CONNECTING" -> null
+                tunnelState == "DISCONNECTED" -> lastError
+                tunnelState == "ERROR" ->
+                    lastError ?: "WireGuard is up but no recent handshake was observed."
+                else -> lastError
+            }
 
         if (profile != null && tunnelState == "CONNECTED") {
             LabGuardVpnRuntimeService.start(
                 context = applicationContext,
                 tunnelName = profile.tunnelName,
-                serverId = profile.serverId,
+                serverName = profile.serverName,
+                locationLabel = profile.locationLabel,
             )
+        } else {
+            LabGuardVpnRuntimeService.stop(applicationContext)
         }
 
         return mapOf(
@@ -78,12 +90,12 @@ class LabGuardVpnManager private constructor(
             "profileRevision" to (profile?.revision ?: 0),
             "desiredConnected" to runtimePreferences.desiredConnected,
             "killSwitchRequested" to runtimePreferences.killSwitchEnabled,
-            "currentIp" to if (tunnelState == "CONNECTED") profile?.interfaceAddress ?: "Unavailable" else "Unavailable",
+            "currentIp" to "Unavailable",
             "bytesReceived" to (statistics?.totalRx() ?: 0L),
             "bytesSent" to (statistics?.totalTx() ?: 0L),
             "connectedAt" to connectedAtEpochMillis?.let(::toIsoString),
             "lastHandshakeAt" to latestHandshake?.let(::toIsoString),
-            "lastError" to lastError,
+            "lastError" to statusError,
             "backendVersion" to backendVersion(),
         )
     }
@@ -92,6 +104,11 @@ class LabGuardVpnManager private constructor(
         deviceId: String,
         tunnelName: String,
         serverId: String,
+        serverName: String,
+        locationLabel: String,
+        endpoint: String,
+        exitIpAddress: String,
+        dnsServers: List<String>,
         revision: Int,
         configText: String,
     ): Map<String, Any?> {
@@ -113,6 +130,11 @@ class LabGuardVpnManager private constructor(
                 deviceId = deviceId,
                 tunnelName = sanitizedTunnelName,
                 serverId = serverId,
+                serverName = serverName,
+                locationLabel = locationLabel,
+                endpoint = endpoint,
+                exitIpAddress = exitIpAddress,
+                dnsServers = dnsServers,
                 revision = revision,
                 configText = configText,
                 config = parsedConfig,
@@ -142,11 +164,6 @@ class LabGuardVpnManager private constructor(
             lastError = null
             backend.setState(tunnel, Tunnel.State.UP, profile.config)
             connectedAtEpochMillis = System.currentTimeMillis()
-            LabGuardVpnRuntimeService.start(
-                context = applicationContext,
-                tunnelName = profile.tunnelName,
-                serverId = profile.serverId,
-            )
         } catch (error: Exception) {
             connectedAtEpochMillis = null
             lastError = error.message ?: "Unable to bring the WireGuard tunnel online."
@@ -219,6 +236,11 @@ class LabGuardVpnManager private constructor(
                     deviceId = persistedProfile.deviceId,
                     tunnelName = sanitizeTunnelName(persistedProfile.tunnelName),
                     serverId = persistedProfile.serverId,
+                    serverName = persistedProfile.serverName,
+                    locationLabel = persistedProfile.locationLabel,
+                    endpoint = persistedProfile.endpoint,
+                    exitIpAddress = persistedProfile.exitIpAddress,
+                    dnsServers = persistedProfile.dnsServers,
                     revision = persistedProfile.revision,
                     configText = persistedProfile.configText,
                     config = parsedConfig,
@@ -241,9 +263,11 @@ class LabGuardVpnManager private constructor(
                 revision = profile.revision,
                 tunnelName = profile.tunnelName,
                 serverId = profile.serverId,
-                serverName = existing?.serverName ?: profile.serverId,
-                endpoint = existing?.endpoint ?: profile.serverId,
-                dnsServers = existing?.dnsServers ?: emptyList(),
+                serverName = profile.serverName,
+                locationLabel = profile.locationLabel,
+                endpoint = profile.endpoint,
+                exitIpAddress = profile.exitIpAddress,
+                dnsServers = profile.dnsServers,
                 issuedAt = existing?.issuedAt,
                 rotatedAt = existing?.rotatedAt,
                 configText = profile.configText,
@@ -293,6 +317,15 @@ class LabGuardVpnManager private constructor(
         return latest
     }
 
+    private fun isRecentHandshake(epochMillis: Long): Boolean {
+        return System.currentTimeMillis() - epochMillis <= HANDSHAKE_STALE_THRESHOLD_MS
+    }
+
+    private fun withinHandshakeGracePeriod(): Boolean {
+        val connectedAt = connectedAtEpochMillis ?: return false
+        return System.currentTimeMillis() - connectedAt <= HANDSHAKE_GRACE_PERIOD_MS
+    }
+
     private fun parseConfig(configText: String): Config {
         return BufferedReader(StringReader(configText)).use(Config::parse)
     }
@@ -328,6 +361,11 @@ class LabGuardVpnManager private constructor(
         val deviceId: String,
         val tunnelName: String,
         val serverId: String,
+        val serverName: String,
+        val locationLabel: String,
+        val endpoint: String,
+        val exitIpAddress: String,
+        val dnsServers: List<String>,
         val revision: Int,
         val configText: String,
         val config: Config,
@@ -335,6 +373,9 @@ class LabGuardVpnManager private constructor(
     )
 
     companion object {
+        private const val HANDSHAKE_GRACE_PERIOD_MS = 15_000L
+        private const val HANDSHAKE_STALE_THRESHOLD_MS = 120_000L
+
         @Volatile
         private var instance: LabGuardVpnManager? = null
 

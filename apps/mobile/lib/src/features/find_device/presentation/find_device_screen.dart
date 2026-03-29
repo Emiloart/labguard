@@ -5,15 +5,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/platform/android_system_security_bridge.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_metrics.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/app_feedback.dart';
+import '../../../core/widgets/panel_header.dart';
 import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../auth/application/auth_controller.dart';
 import '../../devices/application/device_registry_provider.dart';
 import '../../devices/domain/device_record.dart';
 import '../../remote_actions/application/remote_actions_provider.dart';
 import '../../remote_actions/domain/remote_command_record.dart';
+import '../../settings/application/device_security_posture_provider.dart';
 import '../application/find_device_provider.dart';
 import '../domain/find_device_snapshot.dart';
 
@@ -33,19 +39,36 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
   Widget build(BuildContext context) {
     final detail = ref.watch(deviceDetailProvider(widget.deviceId));
     final snapshot = ref.watch(findDeviceSnapshotProvider(widget.deviceId));
+    final currentSessionDeviceId = ref.watch(
+      authControllerProvider.select((state) => state.session?.device.id),
+    );
+    final isCurrentDevice = currentSessionDeviceId == widget.deviceId;
+    final securityPosture = isCurrentDevice
+        ? ref.watch(deviceSecurityPostureProvider)
+        : const AsyncData<DeviceSecurityPosture>(
+            DeviceSecurityPosture.unsupported(),
+          );
+    final device = detail.valueOrNull;
+    final locationSnapshot = snapshot.valueOrNull;
 
-    if (detail.isLoading || snapshot.isLoading) {
+    if ((detail.isLoading || snapshot.isLoading) &&
+        (device == null || locationSnapshot == null)) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
-        children: const [LoadingPanel(label: 'Loading find-device view')],
+        padding: AppMetrics.pagePadding,
+        children: const [
+          LoadingPanel(
+            label: 'Loading find-device view',
+            message:
+                'Preparing last-known location, recovery controls, and live tracking state.',
+          ),
+        ],
       );
     }
 
     final firstError = detail.error ?? snapshot.error;
-    if (firstError != null &&
-        (detail.valueOrNull == null || snapshot.valueOrNull == null)) {
+    if (firstError != null && (device == null || locationSnapshot == null)) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        padding: AppMetrics.pagePadding,
         children: [
           ErrorPanel(
             message: firstError.toString(),
@@ -58,18 +81,43 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
       );
     }
 
-    final device = detail.valueOrNull!;
-    final locationSnapshot = snapshot.valueOrNull!;
+    final resolvedDevice = device!;
+    final resolvedSnapshot = locationSnapshot!;
     final currentLocation = locationSnapshot.currentLocation;
     final timestampFormatter = DateFormat('MMM d, yyyy • HH:mm');
+    final locationOnline = _isLocationOnline(
+      resolvedDevice,
+      resolvedSnapshot,
+      posture: securityPosture.valueOrNull,
+    );
+    final locationStatusLabel = locationOnline
+        ? 'Location online'
+        : 'Location offline';
+    final locationStatusColor = locationOnline
+        ? LabGuardColors.success
+        : LabGuardColors.warning;
+    final permissionStatusLabel = _locationPermissionLabel(
+      securityPosture.valueOrNull,
+      isCurrentDevice: isCurrentDevice,
+    );
+    final locationActionLabel = _locationActionLabel(
+      securityPosture.valueOrNull,
+      isCurrentDevice: isCurrentDevice,
+    );
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+      padding: AppMetrics.pagePadding,
       children: [
+        if (detail.isLoading ||
+            snapshot.isLoading ||
+            securityPosture.isLoading) ...[
+          const LinearProgressIndicator(minHeight: 3),
+          const SizedBox(height: 16),
+        ],
         Row(
           children: [
             IconButton(
-              onPressed: () => context.go('/devices/${device.id}'),
+              onPressed: () => context.go('/devices/${resolvedDevice.id}'),
               tooltip: 'Back to device details',
               icon: const Icon(Icons.arrow_back),
             ),
@@ -78,12 +126,12 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
         const SizedBox(height: 8),
         ScreenIntro(
           eyebrow: 'Recovery',
-          title: 'Find ${device.name}',
+          title: 'Find ${resolvedDevice.name}',
           description:
-              'Last-known location, recovery state, and lost-mode controls for this device.',
-          badge: device.isLost ? 'LOST MODE' : 'TRACKING READY',
+              'Last-known location, recovery state, and explicit lost-mode controls for this device.',
+          badge: resolvedDevice.isLost ? 'LOST MODE' : 'TRACKING READY',
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           padding: const EdgeInsets.all(0),
           child: ClipRRect(
@@ -104,11 +152,41 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
               child: Stack(
                 children: [
                   Positioned.fill(
-                    child: _LocationBackdrop(
-                      currentLocation: currentLocation,
-                      items: locationSnapshot.items,
+                    child: Semantics(
+                      label: currentLocation == null
+                          ? 'No current device location is available'
+                          : 'Map of the last known device location',
+                      child: _LocationBackdrop(
+                        currentLocation: currentLocation,
+                        items: locationSnapshot.items,
+                      ),
                     ),
                   ),
+                  if (currentLocation == null)
+                    Positioned.fill(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Container(
+                            margin: const EdgeInsets.all(24),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: LabGuardColors.panel.withValues(
+                                alpha: 0.9,
+                              ),
+                              borderRadius: BorderRadius.circular(
+                                AppMetrics.tileRadius,
+                              ),
+                              border: Border.all(color: LabGuardColors.border),
+                            ),
+                            child: Text(
+                              'No fresh location is available yet. Request a location sample when the device is online and location access is allowed.',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (currentLocation != null)
                     Positioned(
                       left: 20,
@@ -143,21 +221,17 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         StatusBadge(
-                          label: device.isLost
+                          label: resolvedDevice.isLost
                               ? 'Lost mode active'
                               : 'Monitoring only',
-                          color: device.isLost
+                          color: resolvedDevice.isLost
                               ? LabGuardColors.warning
                               : LabGuardColors.accent,
                         ),
                         const SizedBox(height: 8),
                         StatusBadge(
-                          label: locationSnapshot.liveTrackingEnabled
-                              ? 'Live updates online'
-                              : 'Minimal telemetry',
-                          color: locationSnapshot.liveTrackingEnabled
-                              ? LabGuardColors.success
-                              : LabGuardColors.warning,
+                          label: locationStatusLabel,
+                          color: locationStatusColor,
                         ),
                       ],
                     ),
@@ -172,19 +246,24 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Recovery Status',
-                style: Theme.of(context).textTheme.titleLarge,
+              PanelHeader(
+                title: 'Recovery Status',
+                subtitle: resolvedDevice.isLost
+                    ? 'Lost mode is active. Live updates stay elevated while the device remains online.'
+                    : 'Telemetry stays minimal until lost mode is explicitly enabled.',
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: AppMetrics.contentGap),
               _LocationRow(
                 label: 'Last location',
-                value: currentLocation?.label ?? device.lastKnownLocation,
+                value:
+                    currentLocation?.label ?? resolvedDevice.lastKnownLocation,
               ),
               _LocationRow(
                 label: 'Timestamp',
                 value: currentLocation == null
-                    ? timestampFormatter.format(device.locationCapturedAt)
+                    ? timestampFormatter.format(
+                        resolvedDevice.locationCapturedAt,
+                      )
                     : timestampFormatter.format(currentLocation.capturedAt),
               ),
               _LocationRow(
@@ -197,43 +276,78 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
                 label: 'Network',
                 value:
                     currentLocation?.lastKnownNetwork ??
-                    device.lastKnownNetwork,
+                    resolvedDevice.lastKnownNetwork,
               ),
               _LocationRow(
                 label: 'IP address',
-                value: currentLocation?.lastKnownIp ?? device.lastKnownIp,
+                value:
+                    currentLocation?.lastKnownIp ?? resolvedDevice.lastKnownIp,
+              ),
+              _LocationRow(
+                label: 'Location status',
+                value: locationStatusLabel,
+              ),
+              _LocationRow(
+                label: 'Location access',
+                value: permissionStatusLabel,
               ),
               _LocationRow(
                 label: 'Update mode',
-                value: locationSnapshot.updateFrequencyLabel,
+                value: resolvedSnapshot.updateFrequencyLabel,
               ),
               const SizedBox(height: 16),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: resolvedDevice.isLost,
+                onChanged: _busyAction == null
+                    ? (_) => _toggleLostMode(resolvedDevice)
+                    : null,
+                title: const Text('Live location tracking'),
+                subtitle: Text(
+                  resolvedDevice.isLost
+                      ? 'Enabled. LabGuard will keep elevated recovery updates while this device stays online.'
+                      : 'Disabled. Location remains offline until lost mode is enabled.',
+                ),
+              ),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  FilledButton.tonal(
-                    onPressed: _busyAction == null
-                        ? () => _toggleLostMode(device)
-                        : null,
-                    child: Text(
-                      device.isLost ? 'Mark Recovered' : 'Mark Device Lost',
-                    ),
-                  ),
                   FilledButton(
                     onPressed: _busyAction == null
                         ? _requestFreshLocation
                         : null,
                     child: _BusyLabel(
                       busy: _busyAction == 'fresh location',
-                      label: 'Request Fresh Location',
+                      label: 'Refresh location',
                     ),
                   ),
+                  if (isCurrentDevice)
+                    FilledButton.tonal(
+                      onPressed:
+                          _busyAction == null && !securityPosture.isLoading
+                          ? () => _reviewLocationAccess(
+                              securityPosture.valueOrNull,
+                            )
+                          : null,
+                      child: _BusyLabel(
+                        busy: _busyAction == 'location access',
+                        label: locationActionLabel,
+                      ),
+                    ),
+                  if (isCurrentDevice)
+                    OutlinedButton(
+                      onPressed: _busyAction == null
+                          ? _openApplicationSettings
+                          : null,
+                      child: const Text('App permissions'),
+                    ),
                   OutlinedButton(
                     onPressed: _busyAction == null ? _ringAlarm : null,
                     child: _BusyLabel(
                       busy: _busyAction == 'ring alarm',
-                      label: 'Ring Alarm',
+                      label: 'Ring alarm',
                     ),
                   ),
                 ],
@@ -241,21 +355,30 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppMetrics.sectionGap),
         AppPanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Location Timeline',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Location Timeline',
+                subtitle:
+                    'Recent recovery samples are ordered from newest to oldest.',
               ),
-              const SizedBox(height: 18),
-              for (final item in locationSnapshot.items.take(6)) ...[
-                _TimelineRow(item: item),
-                if (item != locationSnapshot.items.take(6).last)
-                  const SizedBox(height: 14),
-              ],
+              const SizedBox(height: AppMetrics.contentGap),
+              if (resolvedSnapshot.items.isEmpty)
+                const EmptyPanel(
+                  title: 'No recovery samples recorded',
+                  message:
+                      'Location samples will appear here after lost mode is enabled or a fresh location request succeeds.',
+                  icon: Icons.location_off_outlined,
+                )
+              else
+                for (final item in resolvedSnapshot.items.take(6)) ...[
+                  _TimelineRow(item: item),
+                  if (item != resolvedSnapshot.items.take(6).last)
+                    const SizedBox(height: 14),
+                ],
             ],
           ),
         ),
@@ -281,6 +404,36 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
           ? 'Lost mode cleared and device marked recovered.'
           : 'Lost mode enabled with elevated recovery tracking.',
     );
+  }
+
+  Future<void> _reviewLocationAccess(DeviceSecurityPosture? posture) async {
+    final controller = ref.read(deviceSecurityPostureControllerProvider);
+    final status = posture?.locationPermissionStatus ?? 'denied';
+
+    await _runBusy(
+      'location access',
+      () async {
+        if (status == 'granted_precise') {
+          await controller.openApplicationSettings();
+          return;
+        }
+
+        await controller.requestLocationPermission();
+      },
+      status == 'granted_precise'
+          ? 'Android app permissions opened for location review.'
+          : 'Location access request sent to Android.',
+    );
+    ref.invalidate(deviceSecurityPostureProvider);
+  }
+
+  Future<void> _openApplicationSettings() async {
+    await _runBusy('app permissions', () async {
+      await ref
+          .read(deviceSecurityPostureControllerProvider)
+          .openApplicationSettings();
+    }, 'Android app permissions opened.');
+    ref.invalidate(deviceSecurityPostureProvider);
   }
 
   Future<void> _requestFreshLocation() async {
@@ -316,22 +469,92 @@ class _FindDeviceScreenState extends ConsumerState<FindDeviceScreen> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+        message: successMessage,
+        tone: AppFeedbackTone.success,
+      );
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+        message: describeError(error),
+        tone: AppFeedbackTone.warning,
+      );
     } finally {
       if (mounted) {
         setState(() {
           _busyAction = null;
         });
       }
+    }
+  }
+
+  bool _isLocationOnline(
+    DeviceDetailRecord device,
+    FindDeviceSnapshot snapshot, {
+    required DeviceSecurityPosture? posture,
+  }) {
+    final latestLocationAt =
+        snapshot.currentLocation?.capturedAt ?? device.locationCapturedAt;
+    final hasFreshLocation =
+        latestLocationAt.millisecondsSinceEpoch > 0 &&
+        DateTime.now().difference(latestLocationAt) <=
+            const Duration(minutes: 10);
+    final deviceRecentlyActive =
+        device.lastActiveAt.millisecondsSinceEpoch > 0 &&
+        DateTime.now().difference(device.lastActiveAt) <=
+            const Duration(minutes: 10);
+    final permissionReady =
+        posture == null ||
+        posture.locationPermissionStatus == 'granted_precise' ||
+        posture.locationPermissionStatus == 'granted_approximate';
+
+    return permissionReady &&
+        hasFreshLocation &&
+        deviceRecentlyActive &&
+        snapshot.liveTrackingEnabled;
+  }
+
+  String _locationPermissionLabel(
+    DeviceSecurityPosture? posture, {
+    required bool isCurrentDevice,
+  }) {
+    if (!isCurrentDevice) {
+      return 'Managed on that device';
+    }
+
+    switch (posture?.locationPermissionStatus) {
+      case 'granted_precise':
+        return 'Precise access granted';
+      case 'granted_approximate':
+        return 'Approximate only';
+      case 'denied':
+        return 'Access denied';
+      default:
+        return 'Checking device posture';
+    }
+  }
+
+  String _locationActionLabel(
+    DeviceSecurityPosture? posture, {
+    required bool isCurrentDevice,
+  }) {
+    if (!isCurrentDevice) {
+      return 'Location managed remotely';
+    }
+
+    switch (posture?.locationPermissionStatus) {
+      case 'granted_precise':
+        return 'Review location access';
+      case 'granted_approximate':
+        return 'Upgrade to precise location';
+      case 'denied':
+        return 'Enable location access';
+      default:
+        return 'Review location access';
     }
   }
 }

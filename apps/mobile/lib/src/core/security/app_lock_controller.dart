@@ -22,6 +22,10 @@ final appLockControllerProvider = Provider<AppLockController>((ref) {
   return AppLockController(ref);
 });
 
+final biometricAvailabilityProvider = FutureProvider<bool>((ref) {
+  return ref.read(appLockControllerProvider).isBiometricAvailable();
+});
+
 final appLockStateProvider = Provider<AppLockState>((ref) {
   final authStage = ref.watch(
     authControllerProvider.select((state) => state.stage),
@@ -58,6 +62,7 @@ class AppLockController {
   AppLockController(this._ref);
 
   static const appPinHashKey = 'labguard.security.app_pin_hash';
+  static final RegExp _pinPattern = RegExp(r'^\d{4}$');
 
   final Ref _ref;
   final LocalAuthentication _localAuthentication = LocalAuthentication();
@@ -82,6 +87,9 @@ class AppLockController {
 
   Future<void> configurePin(String pin) async {
     final normalized = pin.trim();
+    if (!_pinPattern.hasMatch(normalized)) {
+      throw ArgumentError('App PINs must be exactly four digits.');
+    }
     await _ref
         .read(secureStoreProvider)
         .write(key: appPinHashKey, value: _hashPin(normalized));
@@ -104,7 +112,9 @@ class AppLockController {
 
     try {
       if (state.canUseBiometrics) {
-        final authenticated = await _authenticateBiometric();
+        final authenticated = await authenticateBiometric(
+          localizedReason: 'Unlock LabGuard',
+        );
         if (authenticated) {
           clearLock();
           return true;
@@ -112,8 +122,7 @@ class AppLockController {
       }
 
       if (state.canUsePin) {
-        final normalizedPin = pin?.trim() ?? '';
-        if (normalizedPin.isEmpty) {
+        if (pin == null || pin.trim().isEmpty) {
           _setRuntime(
             unlockInFlight: false,
             errorMessage: 'Enter your app PIN to resume LabGuard.',
@@ -121,8 +130,8 @@ class AppLockController {
           return false;
         }
 
-        final expectedHash = await _ref.read(_appLockPinHashProvider.future);
-        if (expectedHash != null && expectedHash == _hashPin(normalizedPin)) {
+        final pinValid = await verifyPin(pin);
+        if (pinValid) {
           clearLock();
           return true;
         }
@@ -156,16 +165,29 @@ class AppLockController {
     _setRuntime(clearError: true);
   }
 
-  Future<bool> _authenticateBiometric() async {
+  Future<bool> isBiometricAvailable() async {
     try {
       final canCheckBiometrics = await _localAuthentication.canCheckBiometrics;
       final isDeviceSupported = await _localAuthentication.isDeviceSupported();
-      if (!canCheckBiometrics || !isDeviceSupported) {
+      return canCheckBiometrics && isDeviceSupported;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<bool> authenticateBiometric({
+    String localizedReason = 'Approve this LabGuard action',
+  }) async {
+    try {
+      final available = await isBiometricAvailable();
+      if (!available) {
         return false;
       }
 
       return await _localAuthentication.authenticate(
-        localizedReason: 'Unlock LabGuard secure controls',
+        localizedReason: localizedReason,
         options: const AuthenticationOptions(
           biometricOnly: true,
           stickyAuth: true,
@@ -177,6 +199,16 @@ class AppLockController {
     } on PlatformException {
       return false;
     }
+  }
+
+  Future<bool> verifyPin(String pin) async {
+    final normalizedPin = pin.trim();
+    if (!_pinPattern.hasMatch(normalizedPin)) {
+      return false;
+    }
+
+    final expectedHash = await _ref.read(_appLockPinHashProvider.future);
+    return expectedHash != null && expectedHash == _hashPin(normalizedPin);
   }
 
   void _setRuntime({

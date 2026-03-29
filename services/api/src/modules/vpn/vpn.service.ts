@@ -4,6 +4,7 @@ import {
   getVpnProfile,
   getVpnSession,
   listVpnServers,
+  selectVpnServer,
   recordVpnHeartbeat,
   revokeVpnProfile,
   rotateVpnProfile,
@@ -17,6 +18,10 @@ export class VpnService {
 
   getProfile(actor: LabGuardActor, deviceId: string) {
     return getVpnProfile(actor, deviceId);
+  }
+
+  selectServer(actor: LabGuardActor, payload: { deviceId: string; serverId: string }) {
+    return selectVpnServer(actor, payload);
   }
 
   getSession(actor: LabGuardActor, deviceId: string) {
@@ -36,6 +41,9 @@ export class VpnService {
     deviceId?: string;
     serverId?: string;
     currentIp?: string;
+    observedIp?: string;
+    lastHandshakeAt?: string;
+    lastError?: string;
   }) {
     return connectVpnSession(payload.actor, payload);
   }
@@ -54,6 +62,7 @@ export class VpnService {
     serverId?: string;
     tunnelState?: string;
     currentIp?: string;
+    observedIp?: string;
     bytesReceived?: number;
     bytesSent?: number;
     lastHandshakeAt?: string;

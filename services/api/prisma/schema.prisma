@@ -234,6 +234,8 @@ model DeviceSession {
   status          DeviceConnectivityStatus @default(UNKNOWN)
   publicIp        String?
   lastHeartbeatAt DateTime?
+  lastHandshakeAt DateTime?
+  lastError       String?
   connectedAt     DateTime?
   disconnectedAt  DateTime?
   bytesIn         BigInt?

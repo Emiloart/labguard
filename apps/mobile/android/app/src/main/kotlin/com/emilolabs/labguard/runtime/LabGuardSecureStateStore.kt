@@ -88,7 +88,9 @@ class LabGuardSecureStateStore(
                 .put("tunnelName", profile.tunnelName)
                 .put("serverId", profile.serverId)
                 .put("serverName", profile.serverName)
+                .put("locationLabel", profile.locationLabel)
                 .put("endpoint", profile.endpoint)
+                .put("exitIpAddress", profile.exitIpAddress)
                 .put("dnsServers", JSONArray(profile.dnsServers))
                 .put("issuedAt", profile.issuedAt)
                 .put("rotatedAt", profile.rotatedAt)
@@ -147,7 +149,9 @@ class LabGuardSecureStateStore(
             tunnelName = payload.optString("tunnelName", "labguard"),
             serverId = payload.optString("serverId", ""),
             serverName = payload.optString("serverName", "Unassigned"),
+            locationLabel = payload.optString("locationLabel", "Unknown region"),
             endpoint = payload.optString("endpoint", ""),
+            exitIpAddress = payload.optString("exitIpAddress", ""),
             dnsServers = dnsServers,
             issuedAt = payload.optNullableString("issuedAt"),
             rotatedAt = payload.optNullableString("rotatedAt"),
@@ -289,7 +293,9 @@ class LabGuardSecureStateStore(
         val tunnelName: String,
         val serverId: String,
         val serverName: String,
+        val locationLabel: String,
         val endpoint: String,
+        val exitIpAddress: String,
         val dnsServers: List<String>,
         val issuedAt: String?,
         val rotatedAt: String?,

@@ -79,18 +79,31 @@ private class LabGuardVpnMethodCallHandler(
                 val deviceId = call.argument<String>("deviceId")
                 val tunnelName = call.argument<String>("tunnelName")
                 val serverId = call.argument<String>("serverId")
+                val serverName = call.argument<String>("serverName")
+                val locationLabel = call.argument<String>("locationLabel")
+                val endpoint = call.argument<String>("endpoint")
+                val exitIpAddress = call.argument<String>("exitIpAddress")
+                val dnsServers =
+                    call.argument<List<*>>("dnsServers")
+                        ?.mapNotNull { it as? String }
+                        .orEmpty()
                 val revision = call.argument<Int>("revision")
                 val config = call.argument<String>("config")
 
                 if (deviceId.isNullOrBlank() ||
                     tunnelName.isNullOrBlank() ||
                     serverId.isNullOrBlank() ||
+                    serverName.isNullOrBlank() ||
+                    locationLabel.isNullOrBlank() ||
+                    endpoint.isNullOrBlank() ||
+                    exitIpAddress.isNullOrBlank() ||
+                    dnsServers.isEmpty() ||
                     revision == null ||
                     config.isNullOrBlank()
                 ) {
                     result.error(
                         "vpn_invalid_profile",
-                        "Tunnel installation requires deviceId, tunnelName, serverId, revision, and config.",
+                        "Tunnel installation requires server-specific metadata and config.",
                         null,
                     )
                     return
@@ -101,6 +114,11 @@ private class LabGuardVpnMethodCallHandler(
                         deviceId = deviceId,
                         tunnelName = tunnelName,
                         serverId = serverId,
+                        serverName = serverName,
+                        locationLabel = locationLabel,
+                        endpoint = endpoint,
+                        exitIpAddress = exitIpAddress,
+                        dnsServers = dnsServers,
                         revision = revision,
                         configText = config,
                     )

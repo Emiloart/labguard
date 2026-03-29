@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_metrics.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.location, required this.child});
@@ -58,30 +59,61 @@ class AppShell extends StatelessWidget {
             ],
           ),
         ),
-        child: SafeArea(child: child),
+        child: SafeArea(
+          child: AnimatedSwitcher(
+            duration: AppMetrics.standardDuration,
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeOutCubic,
+            transitionBuilder: (child, animation) {
+              final offsetAnimation = Tween<Offset>(
+                begin: const Offset(0, 0.02),
+                end: Offset.zero,
+              ).animate(animation);
+
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(position: offsetAnimation, child: child),
+              );
+            },
+            child: KeyedSubtree(key: ValueKey(location), child: child),
+          ),
+        ),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: Semantics(
-              container: true,
-              label: 'LabGuard primary navigation',
-              child: NavigationBar(
-                selectedIndex: _currentIndex,
-                onDestinationSelected: (index) {
-                  context.go(_destinations[index].path);
-                },
-                destinations: [
-                  for (final destination in _destinations)
-                    NavigationDestination(
-                      icon: Icon(destination.icon),
-                      label: destination.label,
-                      tooltip: 'Open ${destination.label}',
-                    ),
-                ],
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: LabGuardColors.border),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x26000000),
+                  blurRadius: 20,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Semantics(
+                container: true,
+                label: 'LabGuard primary navigation',
+                child: NavigationBar(
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: (index) {
+                    context.go(_destinations[index].path);
+                  },
+                  destinations: [
+                    for (final destination in _destinations)
+                      NavigationDestination(
+                        icon: Icon(destination.icon),
+                        label: destination.label,
+                        tooltip: 'Open ${destination.label}',
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

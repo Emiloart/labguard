@@ -56,6 +56,28 @@ class VpnRepository {
     }
   }
 
+  Future<VpnProfileBundle> selectServer({
+    required String deviceId,
+    required String serverId,
+  }) async {
+    try {
+      final response = await _client.post<Map<String, dynamic>>(
+        '/v1/vpn/profiles/$deviceId/select-server',
+        data: {
+          'serverId': serverId,
+        },
+      );
+      final profile =
+          response.data?['profile'] as Map<String, dynamic>? ?? const {};
+
+      return VpnProfileBundle.fromJson(profile);
+    } on DioException catch (error) {
+      throw ApiException(
+        error.message ?? 'Unable to switch the VPN region right now.',
+      );
+    }
+  }
+
   Future<VpnSessionSnapshot> fetchSession(String deviceId) async {
     try {
       final response = await _client.get<Map<String, dynamic>>(
@@ -105,7 +127,9 @@ class VpnRepository {
   Future<VpnSessionSnapshot> connectSession({
     required String deviceId,
     required String serverId,
-    required String currentIp,
+    String? currentIp,
+    DateTime? lastHandshakeAt,
+    String? lastError,
   }) async {
     try {
       final response = await _client.post<Map<String, dynamic>>(
@@ -113,7 +137,11 @@ class VpnRepository {
         data: {
           'deviceId': deviceId,
           'serverId': serverId,
-          'currentIp': currentIp,
+          ...?(currentIp == null ? null : {'currentIp': currentIp}),
+          ...?(lastHandshakeAt == null
+              ? null
+              : {'lastHandshakeAt': lastHandshakeAt.toIso8601String()}),
+          ...?(lastError == null ? null : {'lastError': lastError}),
         },
       );
 
@@ -157,9 +185,11 @@ class VpnRepository {
           'deviceId': deviceId,
           'serverId': status.serverId,
           'tunnelState': _tunnelStateToWire(status.tunnelState),
-          'currentIp': status.currentIp,
           'bytesReceived': status.bytesReceived,
           'bytesSent': status.bytesSent,
+          ...?(_usableCurrentIp(status.currentIp) == null
+              ? null
+              : {'currentIp': _usableCurrentIp(status.currentIp)}),
           ...?(status.lastHandshakeAt == null
               ? null
               : {'lastHandshakeAt': status.lastHandshakeAt!.toIso8601String()}),
@@ -177,6 +207,15 @@ class VpnRepository {
         error.message ?? 'Unable to sync the tunnel heartbeat.',
       );
     }
+  }
+
+  String? _usableCurrentIp(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized == 'Unavailable') {
+      return null;
+    }
+
+    return normalized;
   }
 
   String _tunnelStateToWire(VpnConnectionState state) {

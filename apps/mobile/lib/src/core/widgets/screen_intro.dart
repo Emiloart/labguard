@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_metrics.dart';
 
 class ScreenIntro extends StatelessWidget {
   const ScreenIntro({
@@ -19,37 +20,44 @@ class ScreenIntro extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MergeSemantics(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _IntroPill(
-                label: eyebrow.toUpperCase(),
-                color: LabGuardColors.accent,
-                background: LabGuardColors.accentMuted.withValues(alpha: 0.24),
-              ),
-              if (badge != null && badge!.isNotEmpty)
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: AppMetrics.maxReadableWidth,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
                 _IntroPill(
-                  label: badge!,
-                  color: LabGuardColors.textPrimary,
-                  background: LabGuardColors.panelElevated,
+                  label: eyebrow.toUpperCase(),
+                  color: LabGuardColors.accent,
+                  background: LabGuardColors.accentMuted.withValues(
+                    alpha: 0.24,
+                  ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Semantics(
-            header: true,
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.headlineMedium,
+                if (badge != null && badge!.isNotEmpty)
+                  _IntroPill(
+                    label: badge!,
+                    color: LabGuardColors.textPrimary,
+                    background: LabGuardColors.panelElevated,
+                  ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(description, style: Theme.of(context).textTheme.bodyMedium),
-        ],
+            const SizedBox(height: 14),
+            Semantics(
+              header: true,
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(description, style: Theme.of(context).textTheme.bodyMedium),
+          ],
+        ),
       ),
     );
   }

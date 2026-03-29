@@ -21,6 +21,9 @@ final vpnSessionControllerProvider =
 class VpnSessionController extends AsyncNotifier<VpnControlState> {
   Timer? _poller;
   bool _autoConnectInFlight = false;
+  DateTime? _lastHeartbeatSentAt;
+  String? _lastHeartbeatSignature;
+  String? _lastBroadcastSignature;
 
   @override
   Future<VpnControlState> build() async {
@@ -40,26 +43,30 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
   }
 
   Future<void> refresh() async {
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final controlState = await _loadState(reconcileNativeProfile: true);
       return _autoConnectIfRequired(controlState);
     });
-    _configurePolling(state.valueOrNull);
+    _commitState(previous: previous);
   }
 
   Future<void> prepareAndroidVpn() async {
+    _beginLoading();
+    final previous = state.valueOrNull;
     await AsyncValue.guard(() async {
       await ref.read(androidVpnBridgeProvider).prepareVpn();
       final controlState = await _loadState(reconcileNativeProfile: false);
       return _autoConnectIfRequired(controlState);
     }).then((value) {
       state = value;
-      _configurePolling(state.valueOrNull);
+      _commitState(previous: previous);
     });
   }
 
   Future<void> installLatestProfile() async {
-    state = const AsyncValue.loading();
+    _beginLoading();
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       final profile = await ref
@@ -79,12 +86,12 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       }
       return _autoConnectIfRequired(current);
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<void> connect() async {
-    state = const AsyncValue.loading();
+    _beginLoading();
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       final bridge = ref.read(androidVpnBridgeProvider);
@@ -100,25 +107,29 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       }
 
       final nativeStatus = await bridge.connect();
-      await ref
+      final remoteSession = await ref
           .read(vpnRepositoryProvider)
           .connectSession(
             deviceId: deviceId,
             serverId: nativeStatus.serverId,
-            currentIp: nativeStatus.currentIp,
+            currentIp: _usableCurrentIp(nativeStatus.currentIp),
+            lastHandshakeAt: nativeStatus.lastHandshakeAt,
+            lastError: nativeStatus.lastError,
           );
-      await ref
-          .read(vpnRepositoryProvider)
-          .recordHeartbeat(deviceId: deviceId, status: nativeStatus);
+      _rememberHeartbeat(nativeStatus);
 
-      return _loadState(reconcileNativeProfile: false);
+      return _loadState(
+        reconcileNativeProfile: false,
+        nativeStatusOverride: nativeStatus,
+        remoteSessionOverride: remoteSession,
+      );
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<void> disconnect() async {
-    state = const AsyncValue.loading();
+    _beginLoading();
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       await ref
@@ -128,21 +139,85 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
           .read(androidVpnBridgeProvider)
           .disconnect();
 
-      await ref
+      final remoteSession = await ref
           .read(vpnRepositoryProvider)
           .disconnectSession(
             deviceId: deviceId,
             reason: nativeStatus.lastError,
           );
+      _rememberHeartbeat(nativeStatus);
 
-      return _loadState(reconcileNativeProfile: false);
+      return _loadState(
+        reconcileNativeProfile: false,
+        nativeStatusOverride: nativeStatus,
+        remoteSessionOverride: remoteSession,
+      );
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
+  }
+
+  Future<void> switchServer(String serverId) async {
+    _beginLoading();
+    final previous = state.valueOrNull;
+    state = await AsyncValue.guard(() async {
+      final deviceId = _currentDeviceId();
+      final current =
+          previous ?? await _loadState(reconcileNativeProfile: true);
+      final shouldReconnect =
+          current.effectiveTunnelState == VpnConnectionState.connected ||
+          current.effectiveTunnelState == VpnConnectionState.connecting ||
+          current.nativeStatus.desiredConnected;
+      final repository = ref.read(vpnRepositoryProvider);
+      final bridge = ref.read(androidVpnBridgeProvider);
+      final profile = await repository.selectServer(
+        deviceId: deviceId,
+        serverId: serverId,
+      );
+
+      await _persistProfile(profile);
+      await _installProfileOnBridge(profile);
+      await ref
+          .read(androidBackgroundRuntimeBridgeProvider)
+          .setVpnConnectionIntent(desiredConnected: shouldReconnect);
+
+      if (!shouldReconnect) {
+        return _loadState(
+          reconcileNativeProfile: false,
+          profileOverride: profile,
+        );
+      }
+
+      final capabilities = await bridge.prepareVpn();
+      if (!capabilities.permissionGranted) {
+        return _loadState(
+          reconcileNativeProfile: false,
+          profileOverride: profile,
+        );
+      }
+
+      final nativeStatus = await bridge.connect();
+      final remoteSession = await repository.connectSession(
+        deviceId: deviceId,
+        serverId: nativeStatus.serverId,
+        currentIp: _usableCurrentIp(nativeStatus.currentIp),
+        lastHandshakeAt: nativeStatus.lastHandshakeAt,
+        lastError: nativeStatus.lastError,
+      );
+      _rememberHeartbeat(nativeStatus);
+
+      return _loadState(
+        reconcileNativeProfile: false,
+        profileOverride: profile,
+        nativeStatusOverride: nativeStatus,
+        remoteSessionOverride: remoteSession,
+      );
+    });
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<void> rotateProfile() async {
-    state = const AsyncValue.loading();
+    _beginLoading();
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       final profile = await ref
@@ -170,12 +245,12 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       }
       return _autoConnectIfRequired(current);
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<void> revokeProfile() async {
-    state = const AsyncValue.loading();
+    _beginLoading();
+    final previous = state.valueOrNull;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       await ref
@@ -198,8 +273,7 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
         profileOverride: profile,
       );
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<void> syncTunnelState() async {
@@ -210,21 +284,30 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       return;
     }
 
+    final previous = current;
     state = await AsyncValue.guard(() async {
       final deviceId = _currentDeviceId();
       final nativeStatus = await ref.read(androidVpnBridgeProvider).getStatus();
-      await ref
-          .read(vpnRepositoryProvider)
-          .recordHeartbeat(deviceId: deviceId, status: nativeStatus);
+      final repository = ref.read(vpnRepositoryProvider);
+      final shouldSendHeartbeat = _shouldSendHeartbeat(nativeStatus);
+      final remoteSession = shouldSendHeartbeat
+          ? await repository.recordHeartbeat(
+              deviceId: deviceId,
+              status: nativeStatus,
+            )
+          : current.remoteSession;
+      if (shouldSendHeartbeat) {
+        _rememberHeartbeat(nativeStatus);
+      }
 
       final controlState = await _loadState(
         reconcileNativeProfile: false,
         nativeStatusOverride: nativeStatus,
+        remoteSessionOverride: remoteSession,
       );
       return _autoConnectIfRequired(controlState);
     });
-    _configurePolling(state.valueOrNull);
-    _invalidateCrossFeatureState();
+    _commitState(previous: previous, invalidateCrossFeatures: true);
   }
 
   Future<VpnControlState> _autoConnectIfRequired(
@@ -249,20 +332,21 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     try {
       final deviceId = _currentDeviceId();
       final nativeStatus = await ref.read(androidVpnBridgeProvider).connect();
-      await ref
+      final remoteSession = await ref
           .read(vpnRepositoryProvider)
           .connectSession(
             deviceId: deviceId,
             serverId: nativeStatus.serverId,
-            currentIp: nativeStatus.currentIp,
+            currentIp: _usableCurrentIp(nativeStatus.currentIp),
+            lastHandshakeAt: nativeStatus.lastHandshakeAt,
+            lastError: nativeStatus.lastError,
           );
-      await ref
-          .read(vpnRepositoryProvider)
-          .recordHeartbeat(deviceId: deviceId, status: nativeStatus);
+      _rememberHeartbeat(nativeStatus);
 
       return _loadState(
         reconcileNativeProfile: false,
         nativeStatusOverride: nativeStatus,
+        remoteSessionOverride: remoteSession,
         profileOverride: controlState.profile,
       );
     } catch (_) {
@@ -279,6 +363,7 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     required bool reconcileNativeProfile,
     VpnProfileBundle? profileOverride,
     VpnNativeStatus? nativeStatusOverride,
+    VpnSessionSnapshot? remoteSessionOverride,
   }) async {
     final deviceId = _currentDeviceId();
     final bridge = ref.read(androidVpnBridgeProvider);
@@ -290,17 +375,24 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     profile ??= await _loadProfileFromRepository(deviceId);
     profile ??= await _readStoredProfile(deviceId);
 
-    if (reconcileNativeProfile && profile != null && profile.hasConfig) {
-      final shouldInstall =
-          !nativeStatus.profileInstalled ||
-          nativeStatus.profileRevision != profile.revision;
+    if (reconcileNativeProfile) {
+      if (profile == null || !profile.hasConfig) {
+        if (nativeStatus.profileInstalled) {
+          nativeStatus = await bridge.clearProfile();
+        }
+      } else {
+        final shouldInstall =
+            !nativeStatus.profileInstalled ||
+            nativeStatus.profileRevision != profile.revision;
 
-      if (shouldInstall) {
-        nativeStatus = await _installProfileOnBridge(profile);
+        if (shouldInstall) {
+          nativeStatus = await _installProfileOnBridge(profile);
+        }
       }
     }
 
-    final remoteSession = await repository.fetchSession(deviceId);
+    final remoteSession =
+        remoteSessionOverride ?? await repository.fetchSession(deviceId);
 
     return VpnControlState(
       profile: profile,
@@ -335,6 +427,11 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     final freshProfile = profile?.hasConfig == true
         ? profile!
         : await ref.read(vpnRepositoryProvider).fetchProfile(deviceId);
+    if (!freshProfile.hasConfig) {
+      throw StateError(
+        'No production-ready VPN region is available for this device.',
+      );
+    }
     await _persistProfile(freshProfile);
     await _installProfileOnBridge(freshProfile);
   }
@@ -354,6 +451,11 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
           deviceId: profile.deviceId,
           tunnelName: profile.tunnelName,
           serverId: profile.serverId,
+          serverName: profile.serverName,
+          locationLabel: profile.locationLabel,
+          endpoint: profile.endpoint,
+          exitIpAddress: profile.exitIpAddress,
+          dnsServers: profile.dnsServers,
           revision: profile.revision,
           config: profile.config!,
         );
@@ -402,8 +504,34 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
     ref.invalidate(vpnOverviewProvider);
   }
 
+  void _commitState({
+    required VpnControlState? previous,
+    bool invalidateCrossFeatures = false,
+  }) {
+    final current = state.valueOrNull;
+    _configurePolling(current);
+
+    if (!invalidateCrossFeatures || current == null) {
+      return;
+    }
+
+    final nextSignature = _broadcastSignature(current);
+    if (_lastBroadcastSignature == nextSignature &&
+        previous != null &&
+        _broadcastSignature(previous) == nextSignature) {
+      return;
+    }
+
+    _lastBroadcastSignature = nextSignature;
+    _invalidateCrossFeatureState();
+  }
+
+  void _beginLoading() {
+    state = const AsyncLoading<VpnControlState>().copyWithPrevious(state);
+  }
+
   void _configurePolling(VpnControlState? controlState) {
-    final connectionState = controlState?.nativeStatus.tunnelState;
+    final connectionState = controlState?.effectiveTunnelState;
     final shouldPoll =
         connectionState == VpnConnectionState.connected ||
         connectionState == VpnConnectionState.connecting;
@@ -413,7 +541,7 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
       return;
     }
 
-    _poller ??= Timer.periodic(const Duration(seconds: 12), (_) {
+    _poller ??= Timer.periodic(const Duration(seconds: 45), (_) {
       unawaited(syncTunnelState());
     });
   }
@@ -437,4 +565,51 @@ class VpnSessionController extends AsyncNotifier<VpnControlState> {
 
   String _profileStorageKey(String deviceId) =>
       'labguard.vpn.profile.$deviceId';
+
+  bool _shouldSendHeartbeat(VpnNativeStatus status) {
+    final now = DateTime.now();
+    final signature = _heartbeatSignature(status);
+
+    if (_lastHeartbeatSentAt == null || _lastHeartbeatSignature != signature) {
+      return true;
+    }
+
+    return now.difference(_lastHeartbeatSentAt!) >= const Duration(minutes: 1);
+  }
+
+  void _rememberHeartbeat(VpnNativeStatus status) {
+    _lastHeartbeatSentAt = DateTime.now();
+    _lastHeartbeatSignature = _heartbeatSignature(status);
+  }
+
+  String _heartbeatSignature(VpnNativeStatus status) {
+    return [
+      status.tunnelState.name,
+      status.serverId,
+      status.currentIp,
+      status.lastHandshakeAt?.millisecondsSinceEpoch ?? 0,
+      status.lastError ?? '',
+      status.connectedAt?.millisecondsSinceEpoch ?? 0,
+    ].join('|');
+  }
+
+  String _broadcastSignature(VpnControlState controlState) {
+    return [
+      controlState.effectiveTunnelState.name,
+      controlState.profile?.serverId ?? '',
+      controlState.remoteSession.serverId,
+      controlState.displayCurrentIp,
+      controlState.remoteSession.profileRevision,
+      controlState.effectiveError ?? '',
+    ].join('|');
+  }
+
+  String? _usableCurrentIp(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || normalized == 'Unavailable') {
+      return null;
+    }
+
+    return normalized;
+  }
 }

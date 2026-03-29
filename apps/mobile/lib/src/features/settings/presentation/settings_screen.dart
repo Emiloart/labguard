@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -6,7 +7,10 @@ import '../../../core/config/app_environment.dart';
 import '../../../core/platform/android_system_security_bridge.dart';
 import '../../../core/security/app_lock_controller.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_metrics.dart';
+import '../../../core/widgets/app_feedback.dart';
 import '../../../core/widgets/app_panel.dart';
+import '../../../core/widgets/panel_header.dart';
 import '../../../core/widgets/screen_intro.dart';
 import '../../../core/widgets/state_panels.dart';
 import '../../auth/application/auth_controller.dart';
@@ -38,6 +42,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      ref.invalidate(biometricAvailabilityProvider);
       ref.read(deviceSecurityPostureControllerProvider).refresh();
     }
   }
@@ -125,11 +130,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
             _reviewBatteryOptimization(data.preferences),
       ),
       loading: () => ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
-        children: const [LoadingPanel(label: 'Loading security settings')],
+        padding: AppMetrics.pagePadding,
+        children: const [
+          LoadingPanel(
+            label: 'Loading security settings',
+            message: 'Preparing access and device settings.',
+          ),
+        ],
       ),
       error: (error, _) => ListView(
-        padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+        padding: AppMetrics.pagePadding,
         children: [
           ErrorPanel(
             message: error.toString(),
@@ -168,47 +178,76 @@ class _SettingsContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(settingsControllerProvider.notifier);
     final preferences = settings.preferences;
+    final biometricAvailability = ref.watch(biometricAvailabilityProvider);
+    final biometricsAvailable = biometricAvailability.valueOrNull ?? false;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 18, 24, 120),
+      padding: AppMetrics.pagePadding,
       children: [
         ScreenIntro(
           eyebrow: 'Trusted Access',
           title: 'Settings & Security',
           description:
               '${settings.profile.viewerDisplayName} • ${settings.profile.accountName}',
-          badge: AppEnvironment.environment.toUpperCase(),
         ),
         const SizedBox(height: 18),
         AppPanel(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const PanelHeader(
+                title: 'App Access',
+                subtitle:
+                    'Choose how LabGuard is reopened on launch and how selected high-risk actions are approved.',
+              ),
+              const SizedBox(height: 8),
               SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 value: preferences.biometricEnabled,
                 onChanged: (value) async {
+                  if (value &&
+                      !biometricAvailability.isLoading &&
+                      !biometricsAvailable) {
+                    showAppSnackBar(
+                      context,
+                      message:
+                          'Enroll a trusted biometric in Android before enabling biometric approval.',
+                      tone: AppFeedbackTone.warning,
+                    );
+                    return;
+                  }
                   await controller.updatePreferences(
                     (current) => current.copyWith(biometricEnabled: value),
                   );
-                  if (value) {
-                    ref.read(appLockControllerProvider).lock();
-                  }
                 },
-                title: const Text('Biometric unlock'),
+                title: const Text('Biometric approval'),
                 subtitle: const Text(
-                  'Require a trusted biometric before exposing protected data.',
+                  'Use biometrics when opening LabGuard and before selected high-risk actions, such as turning the VPN off.',
                 ),
               ),
+              if (preferences.biometricEnabled &&
+                  biometricAvailability.hasValue &&
+                  !biometricsAvailable)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 12),
+                  child: Text(
+                    'Android is not reporting a trusted biometric method on this device yet.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
               SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 value: preferences.pinLockEnabled,
                 onChanged: (value) async {
                   await _handlePinToggle(context, ref, controller, value);
                 },
                 title: const Text('App PIN'),
                 subtitle: const Text(
-                  'Require an additional PIN before app access resumes.',
+                  'Keep a local fallback for opening LabGuard when biometrics are unavailable.',
                 ),
               ),
               SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 value: preferences.notificationsEnabled,
                 onChanged: (value) {
                   controller.updatePreferences(
@@ -239,31 +278,62 @@ class _SettingsContent extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Environment',
-                style: Theme.of(context).textTheme.titleLarge,
+              const PanelHeader(
+                title: 'Account & Build',
+                subtitle:
+                    'The signed-in account identity and current LabGuard build on this device.',
               ),
               const SizedBox(height: 14),
-              Text(
-                'Mode ${AppEnvironment.environment}\nAPI ${AppEnvironment.apiBaseUrl}\nVersion ${AppEnvironment.appVersion}\nBrand ${settings.profile.brandAttribution}\nTelemetry ${preferences.telemetryLevel}\nLost-mode location policy ${preferences.locationPermissionStatus}\nBattery review ${preferences.batteryOptimizationAcknowledged ? 'acknowledged' : 'pending'}',
-                style: Theme.of(context).textTheme.bodyMedium,
+              _SettingsDetailRow(
+                label: 'Viewer',
+                value: settings.profile.viewerDisplayName,
+              ),
+              _SettingsDetailRow(
+                label: 'Account',
+                value: settings.profile.accountName,
+              ),
+              _SettingsDetailRow(
+                label: 'Brand',
+                value: settings.profile.brandAttribution,
+              ),
+              _SettingsDetailRow(
+                label: 'Version',
+                value: AppEnvironment.appVersion,
               ),
               const SizedBox(height: 18),
-              FilledButton.tonal(
-                onPressed: () => context.go('/settings/about'),
-                child: const Text('About LabGuard'),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/settings/about'),
+                    child: const Text('About LabGuard'),
+                  ),
+                  FilledButton.tonal(
+                    onPressed: () => context.go('/settings/audit'),
+                    child: const Text('Audit Trail'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              FilledButton.tonal(
-                onPressed: () => context.go('/settings/audit'),
-                child: const Text('Audit Trail'),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        AppPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const PanelHeader(
+                title: 'Session',
+                subtitle:
+                    'Sign out only when you are ready to remove active account access from this device.',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 18),
               OutlinedButton(
                 onPressed: () async {
                   await onSignOut();
                 },
-                child: const Text('Sign Out'),
+                child: const Text('Sign out on this device'),
               ),
             ],
           ),
@@ -300,7 +370,6 @@ Future<void> _handlePinToggle(
     (current) => current.copyWith(pinLockEnabled: true),
     appPin: pin,
   );
-  appLockController.lock();
 }
 
 Future<String?> _promptForPin(BuildContext context) async {
@@ -309,46 +378,83 @@ Future<String?> _promptForPin(BuildContext context) async {
 
   final pin = await showDialog<String>(
     context: context,
-    builder: (context) => AlertDialog(
-      backgroundColor: LabGuardColors.panel,
-      title: const Text('Set App PIN'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: pinController,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'App PIN'),
+    builder: (context) {
+      String? validationMessage;
+
+      return StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: LabGuardColors.panel,
+          title: const Text('Set app PIN'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Use exactly four digits. This PIN is only used to reopen LabGuard on this device.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: pinController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(4),
+                ],
+                decoration: const InputDecoration(labelText: 'App PIN'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(4),
+                ],
+                decoration: const InputDecoration(labelText: 'Confirm PIN'),
+              ),
+              if (validationMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  validationMessage!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: LabGuardColors.warning,
+                  ),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: confirmController,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Confirm PIN'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final pin = pinController.text.trim();
+                final confirmation = confirmController.text.trim();
+                if (pin.length != 4) {
+                  setState(() {
+                    validationMessage = 'Use exactly four digits.';
+                  });
+                  return;
+                }
+                if (pin != confirmation) {
+                  setState(() {
+                    validationMessage = 'The confirmation PIN does not match.';
+                  });
+                  return;
+                }
+                Navigator.of(context).pop(pin);
+              },
+              child: const Text('Save PIN'),
+            ),
+          ],
         ),
-        FilledButton(
-          onPressed: () {
-            final pin = pinController.text.trim();
-            final confirmation = confirmController.text.trim();
-            if (pin.length < 4 || pin != confirmation) {
-              Navigator.of(context).pop('');
-              return;
-            }
-            Navigator.of(context).pop(pin);
-          },
-          child: const Text('Save PIN'),
-        ),
-      ],
-    ),
+      );
+    },
   );
 
   if (pin == null || pin.isEmpty) {
@@ -383,25 +489,27 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return posture.when(
       data: (data) => _buildContent(context, data),
-      loading: () =>
-          const LoadingPanel(label: 'Inspecting Android runtime posture'),
+      loading: () => const LoadingPanel(
+        label: 'Checking device readiness',
+        message:
+            'Checking notifications, location access, and background readiness.',
+      ),
       error: (error, _) => AppPanel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Device Runtime Posture',
-              style: Theme.of(context).textTheme.titleLarge,
+            const PanelHeader(
+              title: 'Device Readiness',
+              subtitle: 'This device could not be checked right now.',
             ),
-            const SizedBox(height: 8),
             Text(
-              error.toString(),
+              describeError(error, fallback: 'Try again in a moment.'),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 16),
             FilledButton.tonal(
               onPressed: onRefresh,
-              child: const Text('Retry posture check'),
+              child: const Text('Try again'),
             ),
           ],
         ),
@@ -415,14 +523,9 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Device Runtime Posture',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Native Android posture checks are unavailable on this build.',
-              style: Theme.of(context).textTheme.bodyMedium,
+            const PanelHeader(
+              title: 'Device Readiness',
+              subtitle: 'This check is not available on the current device.',
             ),
             const SizedBox(height: 16),
             OutlinedButton(onPressed: onRefresh, child: const Text('Refresh')),
@@ -444,16 +547,11 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Device Runtime Posture',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            requiresReview
-                ? 'Android runtime controls need operator review before this device is trusted for continuous protection.'
-                : 'Android runtime controls meet the current LabGuard protection baseline.',
-            style: Theme.of(context).textTheme.bodyMedium,
+          PanelHeader(
+            title: 'Device Readiness',
+            subtitle: requiresReview
+                ? 'A few settings still need review.'
+                : 'This device is ready for normal use.',
           ),
           const SizedBox(height: 18),
           _PostureStatusRow(
@@ -482,21 +580,21 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
             label: 'Battery optimization',
             value: posture.batteryOptimizationIgnored ? 'Exempt' : 'Restricted',
             detail: posture.batteryOptimizationIgnored
-                ? 'Background sync and command delivery are less likely to be throttled.'
+                ? 'Background checks are less likely to be delayed.'
                 : preferences.batteryOptimizationAcknowledged
-                ? 'Background delivery can still be delayed by Android power management.'
-                : 'Review is still pending for Android power-management restrictions.',
+                ? 'Android may still delay background activity.'
+                : 'Review this setting if updates arrive late.',
             tone: posture.batteryOptimizationIgnored
                 ? _PostureStatusTone.healthy
                 : _PostureStatusTone.review,
           ),
           const SizedBox(height: 12),
           _PostureStatusRow(
-            label: 'Platform build',
-            value: 'Android API ${posture.sdkInt}',
+            label: 'Device support',
+            value: posture.supported ? 'Ready' : 'Limited',
             detail: posture.postNotificationsRuntimePermissionRequired
-                ? 'Runtime notification permission is enforced on this Android release.'
-                : 'Notification delivery is governed by the app-level system toggle.',
+                ? 'Android requires notification approval on this device.'
+                : 'Notifications are controlled from system settings.',
             tone: _PostureStatusTone.healthy,
           ),
           const SizedBox(height: 18),
@@ -511,8 +609,8 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
                       : onOpenNotificationSettings,
                   child: Text(
                     posture.postNotificationsRuntimePermissionRequired
-                        ? 'Request Notifications'
-                        : 'Notification Settings',
+                        ? 'Request notifications'
+                        : 'Notification settings',
                   ),
                 ),
               if (notificationsRequireReview &&
@@ -526,19 +624,19 @@ class _DeviceSecurityPosturePanel extends StatelessWidget {
                   onPressed: onRequestLocationPermission,
                   child: Text(
                     posture.locationPermissionStatus == 'granted_approximate'
-                        ? 'Request Precise Location'
-                        : 'Request Location Access',
+                        ? 'Request precise location'
+                        : 'Request location access',
                   ),
                 ),
               if (locationRequiresReview)
                 FilledButton.tonal(
                   onPressed: onOpenApplicationSettings,
-                  child: const Text('App Permissions'),
+                  child: const Text('App permissions'),
                 ),
               if (batteryRequiresReview)
                 FilledButton.tonal(
                   onPressed: onReviewBatteryOptimization,
-                  child: const Text('Battery Optimization'),
+                  child: const Text('Battery optimization'),
                 ),
               OutlinedButton(
                 onPressed: onRefresh,
@@ -616,7 +714,7 @@ class _PostureStatusRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(AppMetrics.pillRadius),
                 border: Border.all(color: color.withValues(alpha: 0.45)),
               ),
               child: Text(
@@ -632,6 +730,33 @@ class _PostureStatusRow extends StatelessWidget {
         const SizedBox(height: 6),
         Text(detail, style: Theme.of(context).textTheme.bodySmall),
       ],
+    );
+  }
+}
+
+class _SettingsDetailRow extends StatelessWidget {
+  const _SettingsDetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 112,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
+          ),
+        ],
+      ),
     );
   }
 }

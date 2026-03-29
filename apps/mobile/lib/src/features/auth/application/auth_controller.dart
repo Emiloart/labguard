@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/user_facing_error.dart';
 import '../../../core/platform/android_background_runtime_bridge.dart';
 import '../../../core/platform/android_vpn_bridge.dart';
 import '../../dashboard/application/dashboard_controller.dart';
@@ -75,7 +76,10 @@ class AuthController extends Notifier<AuthSessionState> {
       state = state.copyWith(
         stage: AuthStage.signedOut,
         isBusy: false,
-        errorMessage: error.toString(),
+        errorMessage: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to sign in right now.',
+        ),
       );
     }
   }
@@ -98,7 +102,10 @@ class AuthController extends Notifier<AuthSessionState> {
       state = state.copyWith(
         stage: AuthStage.signedOut,
         isBusy: false,
-        errorMessage: error.toString(),
+        errorMessage: userFacingErrorMessage(
+          error,
+          fallback: 'Unable to restore your session right now.',
+        ),
       );
     }
   }

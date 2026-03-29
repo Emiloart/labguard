@@ -1,13 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_environment.dart';
 import '../../core/platform/android_background_runtime_bridge.dart';
 import '../../core/security/app_lock_controller.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_metrics.dart';
 import '../../core/widgets/app_panel.dart';
+import '../../core/widgets/panel_header.dart';
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/domain/auth_state.dart';
 import '../../features/find_device/application/find_device_provider.dart';
@@ -29,6 +32,8 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
     with WidgetsBindingObserver {
   Timer? _poller;
   bool _runtimeActive = false;
+  String? _activeSessionDeviceId;
+  String? _pendingLaunchLockDeviceId;
 
   @override
   void initState() {
@@ -49,11 +54,8 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
       return;
     }
 
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      ref.read(appLockControllerProvider).lock();
       unawaited(_scheduleBackgroundSyncNow());
     }
 
@@ -64,11 +66,28 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
 
   @override
   Widget build(BuildContext context) {
-    final authStage = ref.watch(
-      authControllerProvider.select((state) => state.stage),
-    );
+    final authState = ref.watch(authControllerProvider);
+    final authStage = authState.stage;
+    final sessionDeviceId = authState.session?.device.id;
     final appLockState = ref.watch(appLockStateProvider);
     final shouldRun = authStage == AuthStage.signedIn;
+    final protectionAvailable =
+        appLockState.canUseBiometrics || appLockState.canUsePin;
+
+    if (shouldRun &&
+        sessionDeviceId != null &&
+        sessionDeviceId.isNotEmpty &&
+        _activeSessionDeviceId != sessionDeviceId) {
+      _activeSessionDeviceId = sessionDeviceId;
+      _pendingLaunchLockDeviceId = sessionDeviceId;
+    }
+
+    final shouldArmLaunchLock =
+        shouldRun &&
+        sessionDeviceId != null &&
+        sessionDeviceId.isNotEmpty &&
+        protectionAvailable &&
+        _pendingLaunchLockDeviceId == sessionDeviceId;
 
     if (shouldRun != _runtimeActive) {
       _runtimeActive = shouldRun;
@@ -78,14 +97,12 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
         }
 
         if (_runtimeActive) {
-          final controller = ref.read(appLockControllerProvider);
-          if (appLockState.canUseBiometrics || appLockState.canUsePin) {
-            controller.lock();
-          }
           unawaited(_configureBackgroundSync(enabled: true));
           _startPolling();
           unawaited(_synchronize());
         } else {
+          _activeSessionDeviceId = null;
+          _pendingLaunchLockDeviceId = null;
           ref.read(appLockControllerProvider).clearLock();
           unawaited(_configureBackgroundSync(enabled: false));
           _stopPolling();
@@ -93,17 +110,35 @@ class _AppRuntimeBoundaryState extends ConsumerState<AppRuntimeBoundary>
       });
     }
 
+    if (shouldArmLaunchLock) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _pendingLaunchLockDeviceId != sessionDeviceId) {
+          return;
+        }
+
+        ref.read(appLockControllerProvider).lock();
+        _pendingLaunchLockDeviceId = null;
+      });
+    }
+
     return Stack(
       fit: StackFit.expand,
       children: [
         widget.child,
-        if (appLockState.requiresUnlock) const _AppLockGate(),
+        AnimatedSwitcher(
+          duration: AppMetrics.standardDuration,
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeOutCubic,
+          child: appLockState.requiresUnlock
+              ? const _AppLockGate()
+              : const SizedBox.shrink(),
+        ),
       ],
     );
   }
 
   void _startPolling() {
-    _poller ??= Timer.periodic(const Duration(seconds: 15), (_) {
+    _poller ??= Timer.periodic(const Duration(minutes: 1), (_) {
       unawaited(_synchronize());
     });
   }
@@ -178,6 +213,7 @@ class _AppLockGate extends ConsumerStatefulWidget {
 
 class _AppLockGateState extends ConsumerState<_AppLockGate> {
   final TextEditingController _pinController = TextEditingController();
+  bool _autoUnlockAttempted = false;
 
   @override
   void dispose() {
@@ -190,6 +226,31 @@ class _AppLockGateState extends ConsumerState<_AppLockGate> {
     final lockState = ref.watch(appLockStateProvider);
     final controller = ref.read(appLockControllerProvider);
 
+    if (!lockState.locked) {
+      _autoUnlockAttempted = false;
+    }
+
+    final shouldAutoPromptBiometric =
+        lockState.locked &&
+        lockState.canUseBiometrics &&
+        !lockState.policyLoading &&
+        !lockState.unlockInFlight &&
+        !_autoUnlockAttempted;
+
+    if (shouldAutoPromptBiometric) {
+      _autoUnlockAttempted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) {
+          return;
+        }
+
+        final unlocked = await controller.unlock();
+        if (unlocked && mounted) {
+          _pinController.clear();
+        }
+      });
+    }
+
     return ColoredBox(
       color: LabGuardColors.background.withValues(alpha: 0.92),
       child: SafeArea(
@@ -197,20 +258,15 @@ class _AppLockGateState extends ConsumerState<_AppLockGate> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: AppMetrics.modalPadding,
               child: AppPanel(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Secure Access Locked',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      _subtitle(lockState),
-                      style: Theme.of(context).textTheme.bodyMedium,
+                    PanelHeader(
+                      title: 'Unlock LabGuard',
+                      subtitle: _subtitle(lockState),
                     ),
                     if (lockState.canUsePin) ...[
                       const SizedBox(height: 18),
@@ -218,10 +274,14 @@ class _AppLockGateState extends ConsumerState<_AppLockGate> {
                         controller: _pinController,
                         obscureText: true,
                         keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(4),
+                        ],
                         onChanged: (_) => controller.clearError(),
                         decoration: const InputDecoration(
                           labelText: 'App PIN',
-                          hintText: 'Enter your security PIN',
+                          hintText: 'Enter your 4-digit code',
                         ),
                       ),
                     ],
@@ -276,15 +336,15 @@ class _AppLockGateState extends ConsumerState<_AppLockGate> {
 
   String _subtitle(AppLockState state) {
     if (state.policyLoading) {
-      return 'Loading secure access policy for this trusted LabGuard session.';
+      return 'Loading the secure access policy for this device.';
     }
     if (state.canUseBiometrics && state.canUsePin) {
-      return 'Verify a trusted biometric or enter the app PIN before protected controls resume.';
+      return 'Use biometrics or your app PIN to reopen LabGuard.';
     }
     if (state.canUseBiometrics) {
-      return 'Verify a trusted biometric before protected controls resume.';
+      return 'Use biometrics to reopen LabGuard.';
     }
-    return 'Enter the app PIN before protected controls resume.';
+    return 'Enter your app PIN to reopen LabGuard.';
   }
 
   String _primaryLabel(AppLockState state) {

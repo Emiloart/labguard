@@ -18,17 +18,23 @@ class LabGuardVpnRuntimeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureNotificationChannel()
         val tunnelName = intent?.getStringExtra(EXTRA_TUNNEL_NAME) ?: "labguard"
-        val serverId = intent?.getStringExtra(EXTRA_SERVER_ID) ?: "wg-01"
+        val serverName = intent?.getStringExtra(EXTRA_SERVER_NAME) ?: "LabGuard server"
+        val locationLabel = intent?.getStringExtra(EXTRA_LOCATION_LABEL) ?: "Unknown region"
         startForeground(
             NOTIFICATION_ID,
-            buildNotification(tunnelName = tunnelName, serverId = serverId),
+            buildNotification(
+                tunnelName = tunnelName,
+                serverName = serverName,
+                locationLabel = locationLabel,
+            ),
         )
         return START_STICKY
     }
 
     private fun buildNotification(
         tunnelName: String,
-        serverId: String,
+        serverName: String,
+        locationLabel: String,
     ): Notification {
         val launchIntent =
             Intent(this, MainActivity::class.java).apply {
@@ -47,7 +53,7 @@ class LabGuardVpnRuntimeService : Service() {
                 .Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("LabGuard tunnel active")
-                .setContentText("WireGuard session $tunnelName on $serverId")
+                .setContentText("WireGuard session $tunnelName on $serverName • $locationLabel")
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
                 .build()
@@ -57,7 +63,7 @@ class LabGuardVpnRuntimeService : Service() {
                 .Builder(this)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("LabGuard tunnel active")
-                .setContentText("WireGuard session $tunnelName on $serverId")
+                .setContentText("WireGuard session $tunnelName on $serverName • $locationLabel")
                 .setOngoing(true)
                 .setContentIntent(pendingIntent)
                 .build()
@@ -88,18 +94,21 @@ class LabGuardVpnRuntimeService : Service() {
     companion object {
         private const val CHANNEL_ID = "labguard.vpn.runtime"
         private const val EXTRA_TUNNEL_NAME = "extra_tunnel_name"
-        private const val EXTRA_SERVER_ID = "extra_server_id"
+        private const val EXTRA_SERVER_NAME = "extra_server_name"
+        private const val EXTRA_LOCATION_LABEL = "extra_location_label"
         private const val NOTIFICATION_ID = 3107
 
         fun start(
             context: Context,
             tunnelName: String,
-            serverId: String,
+            serverName: String,
+            locationLabel: String,
         ) {
             val intent =
                 Intent(context, LabGuardVpnRuntimeService::class.java).apply {
                     putExtra(EXTRA_TUNNEL_NAME, tunnelName)
-                    putExtra(EXTRA_SERVER_ID, serverId)
+                    putExtra(EXTRA_SERVER_NAME, serverName)
+                    putExtra(EXTRA_LOCATION_LABEL, locationLabel)
                 }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

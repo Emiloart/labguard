@@ -21,12 +21,48 @@ const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const SESSION_TTL_DAYS = 30;
 const DEFAULT_BRAND_ATTRIBUTION = 'Built by Emilo Labs';
 const DEFAULT_INVITE_CODE = 'EMILO-TRUST-01';
-const DEFAULT_SERVER_NAME = 'Casablanca Primary';
-const DEFAULT_SERVER_REGION = 'ma-cas';
-const DEFAULT_SERVER_HOST = '162.55.11.18';
-const DEFAULT_SERVER_PORT = 51820;
-const DEFAULT_SERVER_ENDPOINT = `${DEFAULT_SERVER_HOST}:${DEFAULT_SERVER_PORT}`;
-const DEFAULT_SERVER_PUBLIC_KEY = '9tU9g4fFJ9m0FQ0W2DB7enNAn6ZQy8dceHvzEO9xvVg=';
+const DEMO_DEVICE_CLIENT_IDS = [
+  'seed-primary-pixel',
+  'seed-galaxy-s24',
+  'seed-owner-tablet',
+] as const;
+
+type ConfiguredVpnServer = {
+  name: string;
+  regionCode: 'uk-lon' | 'us-sfo';
+  locationLabel: string;
+  hostname: string;
+  endpoint: string;
+  port: number;
+  publicKey: string;
+  exitIpAddress: string;
+  dnsServers: string[];
+  priority: number;
+  isPrimary: boolean;
+};
+
+const SERVER_TEMPLATES = [
+  {
+    name: 'UK — London',
+    regionCode: 'uk-lon' as const,
+    locationLabel: 'London, United Kingdom',
+    endpoint: env.VPN_SERVER_LONDON_ENDPOINT,
+    publicKey: env.VPN_SERVER_LONDON_PUBLIC_KEY,
+    exitIpAddress: env.VPN_SERVER_LONDON_EXIT_IP,
+    dnsServers: env.VPN_SERVER_LONDON_DNS,
+    priority: 1,
+  },
+  {
+    name: 'US — San Francisco',
+    regionCode: 'us-sfo' as const,
+    locationLabel: 'San Francisco, United States',
+    endpoint: env.VPN_SERVER_SF_ENDPOINT,
+    publicKey: env.VPN_SERVER_SF_PUBLIC_KEY,
+    exitIpAddress: env.VPN_SERVER_SF_EXIT_IP,
+    dnsServers: env.VPN_SERVER_SF_DNS,
+    priority: 2,
+  },
+] as const;
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -115,9 +151,14 @@ export async function ensureSeedData() {
   const account = await ensureAccountSeed(prisma);
   const owner = await ensureOwnerSeed(prisma, account.id);
   await ensurePreferenceSeed(prisma, owner.id);
-  await ensureServerSeed(prisma, account.id);
+  const provisionedServers = await ensureServerSeeds(prisma, account.id);
+  await cleanupLegacyDemoData(prisma, account.id);
+  await reconcileProvisionedVpnState(
+    prisma,
+    account.id,
+    provisionedServers.map((server) => server.id),
+  );
   await ensureInvitationSeed(prisma, account.id, owner.id);
-  await ensureSampleDeviceSeeds(prisma, account.id, owner.id);
 }
 
 export async function authenticateAccessToken(
@@ -431,7 +472,7 @@ export async function getSessionSnapshot(actor: LabGuardActor) {
 }
 
 export async function getDashboardSummary(actor: LabGuardActor) {
-  const [user, account, devices, securityEvents, vpnSession] = await Promise.all([
+  const [user, account, devices, securityEvents, vpnSession, activeProfile] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: actor.userId } }),
     prisma.account.findUniqueOrThrow({ where: { id: actor.accountId } }),
     prisma.device.findMany({
@@ -441,11 +482,25 @@ export async function getDashboardSummary(actor: LabGuardActor) {
       where: { accountId: actor.accountId },
     }),
     getOrCreateDeviceSession(prisma, actor.deviceId),
+    prisma.vpnProfile.findFirst({
+      where: {
+        deviceId: actor.deviceId,
+        status: 'ACTIVE',
+      },
+      include: { vpnServer: true },
+      orderBy: { revision: 'desc' },
+    }),
   ]);
 
-  const server = vpnSession.serverId == null
-    ? null
-    : await prisma.vpnServer.findUnique({ where: { id: vpnSession.serverId } });
+  const server =
+    (vpnSession.serverId == null
+      ? null
+      : await prisma.vpnServer.findUnique({ where: { id: vpnSession.serverId } })) ??
+    activeProfile?.vpnServer ??
+    null;
+  const selectableServer =
+    server != null && isSelectableServerRecord(server) ? server : null;
+  const connected = vpnSession.status == 'CONNECTED' && selectableServer != null;
 
   return {
     viewer: {
@@ -454,13 +509,15 @@ export async function getDashboardSummary(actor: LabGuardActor) {
       accountName: account.name,
     },
     vpn: {
-      connected: vpnSession.status == 'CONNECTED',
-      serverName: server == null ? 'Unassigned' : `${server.name} • ${server.id}`,
-      currentIp: vpnSession.publicIp ?? 'Unavailable',
+      connected,
+      serverName: selectableServer?.name ?? 'VPN not provisioned',
+      currentIp: connected ? (vpnSession.publicIp ?? 'Unavailable') : 'Unavailable',
       sessionDurationSeconds: vpnSession.connectedAt == null
         ? 0
-        : Math.max(0, Math.floor((Date.now() - vpnSession.connectedAt.getTime()) / 1000)),
-      dnsMode: vpnSession.status == 'CONNECTED' ? 'Private DNS via tunnel' : 'Tunnel down',
+        : connected
+          ? Math.max(0, Math.floor((Date.now() - vpnSession.connectedAt.getTime()) / 1000))
+          : 0,
+      dnsMode: connected ? 'Private DNS via tunnel' : 'No live region provisioned',
     },
     security: {
       trustedDevicesCount: devices.filter((device) => device.trustState == 'TRUSTED').length,
@@ -939,25 +996,107 @@ export async function verifyAppPin(actor: LabGuardActor, pin?: string) {
 
 export async function listVpnServers(actor: LabGuardActor) {
   const servers = await prisma.vpnServer.findMany({
-    where: { accountId: actor.accountId },
+    where: {
+      accountId: actor.accountId,
+      status: 'ACTIVE',
+    },
     orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
   });
 
-  return servers.map((server) => ({
-    id: server.id,
-    name: server.name,
-    regionCode: server.regionCode,
-    endpoint: server.endpoint,
-    status: server.status,
-    isPrimary: server.isPrimary,
-    dnsServers: defaultDnsServers(),
-  }));
+  return servers
+    .map((server) => serializeVpnServerRecord(server))
+    .filter((server): server is NonNullable<typeof server> => server != null);
 }
 
 export async function getVpnProfile(actor: LabGuardActor, deviceId: string) {
   const device = await requireAccountDevice(prisma, actor.accountId, deviceId);
   const profile = await ensureActiveVpnProfile(prisma, device);
-  return serializeVpnProfile(profile);
+  return profile == null ? emptyVpnProfile(device.id) : serializeVpnProfile(profile);
+}
+
+export async function selectVpnServer(
+  actor: LabGuardActor,
+  payload: { deviceId: string; serverId: string },
+) {
+  const device = await requireAccountDevice(prisma, actor.accountId, payload.deviceId);
+  const server = await requireSelectableVpnServer(prisma, actor.accountId, payload.serverId);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const active = await tx.vpnProfile.findFirst({
+      where: {
+        deviceId: device.id,
+        status: 'ACTIVE',
+      },
+      include: { vpnServer: true },
+      orderBy: { revision: 'desc' },
+    });
+
+    if (active?.vpnServerId == server.id) {
+      return active;
+    }
+
+    if (active != null) {
+      await tx.vpnProfile.update({
+        where: { id: active.id },
+        data: {
+          status: 'ROTATED',
+          rotatedAt: new Date(),
+        },
+      });
+    }
+
+    const created = await createVpnProfile(tx, device, server, (active?.revision ?? 0) + 1);
+    const session = await getOrCreateDeviceSession(tx, device.id);
+
+    await tx.deviceSession.update({
+      where: { id: session.id },
+      data: {
+        serverId: server.id,
+        status: 'DISCONNECTED',
+        publicIp: 'Unavailable',
+        connectedAt: null,
+        disconnectedAt: new Date(),
+        lastHeartbeatAt: new Date(),
+        lastHandshakeAt: null,
+        lastError: `A new profile is ready for ${server.name}. Reconnect to switch the tunnel.`,
+      },
+    });
+    await tx.device.update({
+      where: { id: device.id },
+      data: {
+        connectivityStatus: 'DISCONNECTED',
+        lastSeenAt: new Date(),
+      },
+    });
+
+    await emitSecurityEvent(tx, {
+      accountId: actor.accountId,
+      userId: actor.userId,
+      deviceId: device.id,
+      type: 'KEY_ROTATED',
+      severity: 'INFO',
+      title: `VPN server switched to ${server.name}`,
+      summary: `A server-specific WireGuard profile was issued for ${server.name}.`,
+    });
+    await emitAuditLog(tx, {
+      accountId: actor.accountId,
+      actorUserId: actor.userId,
+      deviceId: device.id,
+      action: 'VPN_SERVER_SELECTED',
+      targetType: 'VPN_SERVER',
+      targetId: server.id,
+      outcome: 'SUCCESS',
+      summary: `The device selected ${server.name} as its VPN exit region.`,
+    });
+
+    return created;
+  });
+
+  return {
+    deviceId: device.id,
+    switchedAt: new Date().toISOString(),
+    profile: serializeVpnProfile(result),
+  };
 }
 
 export async function rotateVpnProfile(actor: LabGuardActor, deviceId: string) {
@@ -981,11 +1120,9 @@ export async function rotateVpnProfile(actor: LabGuardActor, deviceId: string) {
     }
 
     const server =
-      active?.vpnServer ??
-      (await tx.vpnServer.findFirstOrThrow({
-        where: { accountId: device.accountId, status: 'ACTIVE' },
-        orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
-      }));
+      active?.vpnServer != null && isSelectableServerRecord(active.vpnServer)
+        ? active.vpnServer
+        : await resolvePrimaryServer(tx, device.accountId);
     const created = await createVpnProfile(tx, device, server, (active?.revision ?? 0) + 1);
 
     await emitSecurityEvent(tx, {
@@ -1042,7 +1179,14 @@ export async function getVpnSession(actor: LabGuardActor, deviceId: string) {
 
 export async function connectVpnSession(
   actor: LabGuardActor,
-  payload: { deviceId?: string; serverId?: string; currentIp?: string },
+  payload: {
+    deviceId?: string;
+    serverId?: string;
+    currentIp?: string;
+    observedIp?: string;
+    lastHandshakeAt?: string;
+    lastError?: string;
+  },
 ) {
   const deviceId = payload.deviceId ?? actor.deviceId;
   await requireAccountDevice(prisma, actor.accountId, deviceId);
@@ -1050,28 +1194,33 @@ export async function connectVpnSession(
   const server =
     payload.serverId == null
       ? await resolvePrimaryServer(prisma, actor.accountId)
-      : await prisma.vpnServer.findFirstOrThrow({
-          where: { id: payload.serverId, accountId: actor.accountId },
-        });
-  const connectedAt = session.connectedAt ?? new Date();
+      : await requireSelectableVpnServer(prisma, actor.accountId, payload.serverId);
+  const observedIp = normalizeObservedIp(payload.observedIp);
+  const verification = verifyObservedExitIp(server, observedIp);
+  const nextStatus = verification.verified ? 'CONNECTED' : 'DEGRADED';
+  const connectedAt =
+    nextStatus == 'CONNECTED' ? (session.connectedAt ?? new Date()) : session.connectedAt;
+  const lastHandshakeAt = parseIsoDate(payload.lastHandshakeAt);
 
   await prisma.deviceSession.update({
     where: { id: session.id },
     data: {
-      status: 'CONNECTED',
+      status: nextStatus,
       serverId: server.id,
-      publicIp: payload.currentIp ?? 'Unavailable',
+      publicIp: observedIp ?? payload.currentIp ?? 'Unavailable',
       connectedAt,
       disconnectedAt: null,
       lastHeartbeatAt: new Date(),
+      lastHandshakeAt,
+      lastError: verification.errorMessage ?? payload.lastError ?? null,
     },
   });
   await prisma.device.update({
     where: { id: deviceId },
     data: {
-      connectivityStatus: 'CONNECTED',
+      connectivityStatus: nextStatus,
       lastSeenAt: new Date(),
-      ...optionalStringProperty('lastKnownIp', payload.currentIp),
+      ...optionalStringProperty('lastKnownIp', observedIp ?? payload.currentIp),
     },
   });
 
@@ -1096,6 +1245,8 @@ export async function disconnectVpnSession(
       status: 'DISCONNECTED',
       disconnectedAt: new Date(),
       lastHeartbeatAt: new Date(),
+      lastHandshakeAt: null,
+      lastError: payload.reason ?? null,
       publicIp: 'Unavailable',
       serverId: null,
     },
@@ -1122,6 +1273,7 @@ export async function recordVpnHeartbeat(
     serverId?: string;
     tunnelState?: string;
     currentIp?: string;
+    observedIp?: string;
     bytesReceived?: number;
     bytesSent?: number;
     lastHandshakeAt?: string;
@@ -1131,21 +1283,47 @@ export async function recordVpnHeartbeat(
   const deviceId = payload.deviceId ?? actor.deviceId;
   await requireAccountDevice(prisma, actor.accountId, deviceId);
   const session = await getOrCreateDeviceSession(prisma, deviceId);
-  const nextStatus = tunnelStateToConnectivityStatus(payload.tunnelState);
+  const server =
+    payload.serverId == null
+      ? (session.serverId == null
+          ? null
+          : await prisma.vpnServer.findFirst({
+              where: {
+                id: session.serverId,
+                accountId: actor.accountId,
+              },
+            }))
+      : await prisma.vpnServer.findFirst({
+          where: {
+            id: payload.serverId,
+            accountId: actor.accountId,
+          },
+        });
+  const observedIp = normalizeObservedIp(payload.observedIp);
+  const verification = verifyObservedExitIp(server, observedIp);
+  const nextStatus = resolveHeartbeatStatus({
+    ...(payload.tunnelState == null ? {} : { tunnelState: payload.tunnelState }),
+    verifiedExit: verification.verified,
+  });
+  const lastHandshakeAt = parseIsoDate(payload.lastHandshakeAt);
 
   await prisma.deviceSession.update({
     where: { id: session.id },
     data: {
       status: nextStatus,
-      ...(payload.serverId == null ? {} : { serverId: payload.serverId }),
-      publicIp: payload.currentIp ?? session.publicIp,
+      ...(server == null ? {} : { serverId: server.id }),
+      publicIp: observedIp ?? payload.currentIp ?? session.publicIp,
       bytesIn: BigInt(Math.max(0, payload.bytesReceived ?? Number(session.bytesIn ?? 0n))),
       bytesOut: BigInt(Math.max(0, payload.bytesSent ?? Number(session.bytesOut ?? 0n))),
       lastHeartbeatAt: new Date(),
+      lastHandshakeAt,
+      lastError: verification.errorMessage ?? payload.lastError ?? null,
       connectedAt:
         nextStatus == 'CONNECTED'
           ? session.connectedAt ?? new Date()
-          : session.connectedAt,
+          : nextStatus == 'DEGRADED'
+            ? session.connectedAt
+            : null,
     },
   });
   await prisma.device.update({
@@ -1153,7 +1331,7 @@ export async function recordVpnHeartbeat(
     data: {
       connectivityStatus: nextStatus,
       lastSeenAt: new Date(),
-      ...optionalStringProperty('lastKnownIp', payload.currentIp),
+      ...optionalStringProperty('lastKnownIp', observedIp ?? payload.currentIp),
     },
   });
 
@@ -1549,36 +1727,78 @@ async function ensurePreferenceSeed(db: DbClient, userId: string) {
   });
 }
 
-async function ensureServerSeed(db: DbClient, accountId: string) {
-  return db.vpnServer.upsert({
-    where: {
-      accountId_name: {
+async function ensureServerSeeds(db: DbClient, accountId: string) {
+  const configuredServers = configuredVpnServers();
+
+  if (configuredServers.length == 0) {
+    await db.vpnServer.updateMany({
+      where: {
         accountId,
-        name: DEFAULT_SERVER_NAME,
+        status: 'ACTIVE',
+      },
+      data: {
+        status: 'DISABLED',
+        isPrimary: false,
+      },
+    });
+
+    return [];
+  }
+
+  await Promise.all(
+    configuredServers.map((server) =>
+      db.vpnServer.upsert({
+        where: {
+          accountId_name: {
+            accountId,
+            name: server.name,
+          },
+        },
+        update: {
+          endpoint: server.endpoint,
+          hostname: server.hostname,
+          regionCode: server.regionCode,
+          publicKey: server.publicKey,
+          isPrimary: server.isPrimary,
+          status: 'ACTIVE',
+          priority: server.priority,
+          port: server.port,
+        },
+        create: {
+          accountId,
+          name: server.name,
+          regionCode: server.regionCode,
+          hostname: server.hostname,
+          endpoint: server.endpoint,
+          port: server.port,
+          publicKey: server.publicKey,
+          isPrimary: server.isPrimary,
+          status: 'ACTIVE',
+          priority: server.priority,
+        },
+      }),
+    ),
+  );
+
+  await db.vpnServer.updateMany({
+    where: {
+      accountId,
+      name: {
+        notIn: configuredServers.map((server) => server.name),
       },
     },
-    update: {
-      endpoint: DEFAULT_SERVER_ENDPOINT,
-      hostname: DEFAULT_SERVER_HOST,
-      regionCode: DEFAULT_SERVER_REGION,
-      publicKey: DEFAULT_SERVER_PUBLIC_KEY,
-      isPrimary: true,
-      status: 'ACTIVE',
-      priority: 1,
-      port: DEFAULT_SERVER_PORT,
+    data: {
+      status: 'DISABLED',
+      isPrimary: false,
     },
-    create: {
+  });
+
+  return db.vpnServer.findMany({
+    where: {
       accountId,
-      name: DEFAULT_SERVER_NAME,
-      regionCode: DEFAULT_SERVER_REGION,
-      hostname: DEFAULT_SERVER_HOST,
-      endpoint: DEFAULT_SERVER_ENDPOINT,
-      port: DEFAULT_SERVER_PORT,
-      publicKey: DEFAULT_SERVER_PUBLIC_KEY,
-      isPrimary: true,
       status: 'ACTIVE',
-      priority: 1,
     },
+    orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
   });
 }
 
@@ -1606,139 +1826,143 @@ async function ensureInvitationSeed(db: DbClient, accountId: string, ownerUserId
   });
 }
 
-async function ensureSampleDeviceSeeds(db: DbClient, accountId: string, ownerUserId: string) {
-  const devices = [
-    {
-      clientId: 'seed-primary-pixel',
-      name: 'Primary Pixel',
-      model: 'Google Pixel 9 Pro',
-      platform: 'Android 15',
-      appVersion: '1.0.0',
-      trustState: 'TRUSTED' as DeviceTrustState,
-      lostModeStatus: 'OFF' as const,
-      connectivityStatus: 'CONNECTED' as DeviceConnectivityStatus,
-      isPrimary: true,
-      batteryLevel: 82,
-      lastKnownIp: '185.233.44.12',
-      lastKnownNetwork: 'Emilo Labs Secure Wi-Fi',
-      lastKnownLocation: 'Casablanca, MA',
-    },
-    {
-      clientId: 'seed-galaxy-s24',
-      name: 'Galaxy S24',
-      model: 'Samsung Galaxy S24',
-      platform: 'Android 14',
-      appVersion: '1.0.0',
-      trustState: 'TRUSTED' as DeviceTrustState,
-      lostModeStatus: 'ACTIVE' as const,
-      connectivityStatus: 'DEGRADED' as DeviceConnectivityStatus,
-      isPrimary: false,
-      batteryLevel: 37,
-      lastKnownIp: '197.14.18.90',
-      lastKnownNetwork: 'Airport Guest Wi-Fi',
-      lastKnownLocation: 'Casablanca Marina',
-    },
-    {
-      clientId: 'seed-owner-tablet',
-      name: 'Owner Tablet',
-      model: 'Samsung Tab S9',
-      platform: 'Android 14',
-      appVersion: '1.0.0',
-      trustState: 'PENDING_APPROVAL' as DeviceTrustState,
-      lostModeStatus: 'OFF' as const,
-      connectivityStatus: 'DISCONNECTED' as DeviceConnectivityStatus,
-      isPrimary: false,
-      batteryLevel: 61,
-      lastKnownIp: 'Unavailable',
-      lastKnownNetwork: 'Unavailable',
-      lastKnownLocation: 'Location unavailable',
-    },
-  ];
-
-  const server = await ensureServerSeed(db, accountId);
-
-  for (const seed of devices) {
-    const device = await db.device.upsert({
-      where: { clientId: seed.clientId },
-      update: {
-        accountId,
-        userId: ownerUserId,
-        name: seed.name,
-        model: seed.model,
-        platform: seed.platform,
-        appVersion: seed.appVersion,
-        trustState: seed.trustState,
-        lostModeStatus: seed.lostModeStatus,
-        connectivityStatus: seed.connectivityStatus,
-        isPrimary: seed.isPrimary,
-        batteryLevel: seed.batteryLevel,
-        lastSeenAt: new Date(),
-        lastKnownIp: seed.lastKnownIp,
-        lastKnownNetwork: seed.lastKnownNetwork,
-        lastKnownLocation: seed.lastKnownLocation,
+async function cleanupLegacyDemoData(db: DbClient, accountId: string) {
+  const demoDevices = await db.device.findMany({
+    where: {
+      accountId,
+      clientId: {
+        in: [...DEMO_DEVICE_CLIENT_IDS],
       },
-      create: {
-        accountId,
-        userId: ownerUserId,
-        clientId: seed.clientId,
-        name: seed.name,
-        model: seed.model,
-        platform: seed.platform,
-        appVersion: seed.appVersion,
-        trustState: seed.trustState,
-        lostModeStatus: seed.lostModeStatus,
-        connectivityStatus: seed.connectivityStatus,
-        isPrimary: seed.isPrimary,
-        batteryLevel: seed.batteryLevel,
-        lastSeenAt: new Date(),
-        lastKnownIp: seed.lastKnownIp,
-        lastKnownNetwork: seed.lastKnownNetwork,
-        lastKnownLocation: seed.lastKnownLocation,
-      },
-    });
+    },
+    select: { id: true },
+  });
 
-    const session = await getOrCreateDeviceSession(db, device.id);
-    await db.deviceSession.update({
-      where: { id: session.id },
-      data: {
-        status: seed.connectivityStatus,
-        serverId: server.id,
-        publicIp: seed.lastKnownIp == 'Unavailable' ? null : seed.lastKnownIp,
-        connectedAt: seed.connectivityStatus == 'CONNECTED' ? new Date(Date.now() - 90 * 60_000) : null,
-        lastHeartbeatAt: new Date(),
-        bytesIn: seed.connectivityStatus == 'CONNECTED' ? BigInt(1_572_864) : BigInt(0),
-        bytesOut: seed.connectivityStatus == 'CONNECTED' ? BigInt(721_920) : BigInt(0),
-      },
-    });
-
-    const existingLocation = await db.deviceLocation.findFirst({
-      where: { deviceId: device.id },
-    });
-    if (existingLocation == null) {
-      await db.deviceLocation.create({
-        data: {
-          deviceId: device.id,
-          latitude: new Prisma.Decimal(seed.clientId == 'seed-galaxy-s24' ? '33.6084' : '33.5731'),
-          longitude: new Prisma.Decimal(seed.clientId == 'seed-galaxy-s24' ? '-7.6324' : '-7.5898'),
-          accuracyMeters: seed.clientId == 'seed-galaxy-s24' ? 18 : 26,
-          capturedAt: new Date(),
-          networkType: seed.lastKnownNetwork,
-          ipAddress: seed.lastKnownIp == 'Unavailable' ? null : seed.lastKnownIp,
-          source: seed.lostModeStatus == 'ACTIVE' ? 'LOST_MODE' : 'BACKGROUND',
-          lostModeSnapshot: seed.lostModeStatus == 'ACTIVE',
-        },
-      });
-    }
-
-    if (seed.trustState == 'TRUSTED') {
-      const activeProfile = await db.vpnProfile.findFirst({
-        where: { deviceId: device.id, status: 'ACTIVE' },
-      });
-      if (activeProfile == null) {
-        await createVpnProfile(db, device, server, 1);
-      }
-    }
+  if (demoDevices.length == 0) {
+    return;
   }
+
+  const demoDeviceIds = demoDevices.map((device) => device.id);
+
+  await db.auditLog.deleteMany({
+    where: {
+      accountId,
+      deviceId: {
+        in: demoDeviceIds,
+      },
+    },
+  });
+  await db.securityEvent.deleteMany({
+    where: {
+      accountId,
+      deviceId: {
+        in: demoDeviceIds,
+      },
+    },
+  });
+  await db.device.deleteMany({
+    where: {
+      id: {
+        in: demoDeviceIds,
+      },
+    },
+  });
+}
+
+async function reconcileProvisionedVpnState(
+  db: DbClient,
+  accountId: string,
+  selectableServerIds: string[],
+) {
+  const accountDevices = await db.device.findMany({
+    where: { accountId },
+    select: { id: true },
+  });
+
+  if (accountDevices.length == 0) {
+    return;
+  }
+
+  const deviceIds = accountDevices.map((device) => device.id);
+  const now = new Date();
+
+  if (selectableServerIds.length == 0) {
+    await db.vpnProfile.updateMany({
+      where: {
+        deviceId: {
+          in: deviceIds,
+        },
+        status: 'ACTIVE',
+      },
+      data: {
+        status: 'REVOKED',
+        revokedAt: now,
+        rotatedAt: now,
+      },
+    });
+    await db.deviceSession.updateMany({
+      where: {
+        deviceId: {
+          in: deviceIds,
+        },
+      },
+      data: {
+        serverId: null,
+        status: 'DISCONNECTED',
+        publicIp: null,
+        connectedAt: null,
+        disconnectedAt: now,
+        bytesIn: BigInt(0),
+        bytesOut: BigInt(0),
+        lastError: 'No production-ready VPN region is configured for this account.',
+      },
+    });
+    return;
+  }
+
+  await db.vpnProfile.updateMany({
+    where: {
+      deviceId: {
+        in: deviceIds,
+      },
+      status: 'ACTIVE',
+      NOT: {
+        vpnServerId: {
+          in: selectableServerIds,
+        },
+      },
+    },
+    data: {
+      status: 'REVOKED',
+      revokedAt: now,
+      rotatedAt: now,
+    },
+  });
+  await db.deviceSession.updateMany({
+    where: {
+      deviceId: {
+        in: deviceIds,
+      },
+      serverId: {
+        not: null,
+      },
+      NOT: {
+        serverId: {
+          in: selectableServerIds,
+        },
+      },
+    },
+    data: {
+      serverId: null,
+      status: 'DISCONNECTED',
+      publicIp: null,
+      connectedAt: null,
+      disconnectedAt: now,
+      bytesIn: BigInt(0),
+      bytesOut: BigInt(0),
+      lastError:
+        'The active VPN region is no longer available. Refresh the device profile before reconnecting.',
+    },
+  });
 }
 
 async function ensureMemberFromInvitation(
@@ -1920,27 +2144,85 @@ async function ensureActiveVpnProfile(
     include: { vpnServer: true },
   });
 
-  if (existing != null) {
+  if (existing != null && isSelectableServerRecord(existing.vpnServer)) {
     return existing;
   }
 
-  const server = await resolvePrimaryServer(db, device.accountId);
+  if (existing != null) {
+    await db.vpnProfile.update({
+      where: { id: existing.id },
+      data: {
+        status: 'REVOKED',
+        rotatedAt: new Date(),
+      },
+    });
+  }
+
+  const server = await db.vpnServer.findFirst({
+    where: { accountId: device.accountId, status: 'ACTIVE' },
+    orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
+  });
+  if (server == null || !isSelectableServerRecord(server)) {
+    return null;
+  }
+
   return createVpnProfile(db, device, server, 1);
 }
 
 async function resolvePrimaryServer(db: DbClient, accountId: string) {
-  return db.vpnServer.findFirstOrThrow({
+  const server = await db.vpnServer.findFirst({
     where: { accountId, status: 'ACTIVE' },
     orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
   });
+
+  if (server == null || !isSelectableServerRecord(server)) {
+    throw badRequest(
+      'No production-ready VPN server is configured for this account.',
+    );
+  }
+
+  return server;
+}
+
+async function requireSelectableVpnServer(
+  db: DbClient,
+  accountId: string,
+  serverId: string,
+) {
+  const server = await db.vpnServer.findFirst({
+    where: {
+      id: serverId,
+      accountId,
+      status: 'ACTIVE',
+    },
+  });
+
+  if (server == null || !isSelectableServerRecord(server)) {
+    throw badRequest('The selected VPN region is not configured for use.');
+  }
+
+  return server;
 }
 
 async function createVpnProfile(
   db: DbClient,
   device: { id: string; clientId: string },
-  server: { id: string; publicKey: string; endpoint: string; name?: string },
+  server: {
+    id: string;
+    publicKey: string;
+    endpoint: string;
+    name?: string;
+    regionCode?: string;
+  },
   revision: number,
 ) {
+  const configuredServer = resolveConfiguredServerForRecord(server);
+  if (configuredServer == null) {
+    throw badRequest(
+      'The selected VPN server is missing its live endpoint configuration.',
+    );
+  }
+
   const privateKey = randomWireGuardKey();
   const publicKey = randomWireGuardKey();
   const presharedKey = randomWireGuardKey();
@@ -1955,7 +2237,7 @@ async function createVpnProfile(
       privateKeyEncrypted: encryptSecret(privateKey),
       presharedKeyEncrypted: encryptSecret(presharedKey),
       assignedAddress,
-      dnsServers: defaultDnsServers(),
+      dnsServers: configuredServer.dnsServers,
       status: 'ACTIVE',
       issuedAt: new Date(),
       rotatedAt: revision > 1 ? new Date() : null,
@@ -2040,6 +2322,8 @@ async function getOrCreateDeviceSession(db: DbClient, deviceId: string) {
       status: 'DISCONNECTED',
       publicIp: 'Unavailable',
       lastHeartbeatAt: new Date(),
+      lastHandshakeAt: null,
+      lastError: null,
       bytesIn: BigInt(0),
       bytesOut: BigInt(0),
     },
@@ -2238,11 +2522,25 @@ function serializeVpnProfile(
     vpnServer: {
       id: string;
       name: string;
+      regionCode?: string;
+      hostname?: string;
+      port?: number;
       endpoint: string;
       publicKey: string;
     };
   },
 ) {
+  const server = resolveConfiguredServerForRecord(profile.vpnServer);
+  if (server == null) {
+    return {
+      ...emptyVpnProfile(profile.deviceId),
+      revision: profile.revision,
+      issuedAt: profile.issuedAt.toISOString(),
+      rotatedAt: profile.rotatedAt?.toISOString() ?? profile.issuedAt.toISOString(),
+      note: 'No production-ready VPN region is configured for this device.',
+    };
+  }
+
   const tunnelName = tunnelNameForDevice(profile.deviceId);
   return {
     deviceId: profile.deviceId,
@@ -2251,7 +2549,9 @@ function serializeVpnProfile(
     tunnelName,
     serverId: profile.vpnServer.id,
     serverName: profile.vpnServer.name,
+    locationLabel: server?.locationLabel ?? profile.vpnServer.name,
     endpoint: profile.vpnServer.endpoint,
+    exitIpAddress: server?.exitIpAddress ?? '',
     dnsServers: profile.dnsServers,
     issuedAt: profile.issuedAt.toISOString(),
     rotatedAt: profile.rotatedAt?.toISOString() ?? profile.issuedAt.toISOString(),
@@ -2279,13 +2579,15 @@ function emptyVpnProfile(deviceId: string) {
     revision: 0,
     tunnelName: tunnelNameForDevice(deviceId),
     serverId: '',
-    serverName: 'Unassigned',
+    serverName: 'VPN not provisioned',
+    locationLabel: 'Provisioning required',
     endpoint: '',
+    exitIpAddress: '',
     dnsServers: [],
     issuedAt: new Date(0).toISOString(),
     rotatedAt: new Date(0).toISOString(),
     config: null,
-    note: 'No active VPN profile is installed for this device.',
+    note: 'No production-ready VPN region is configured for this device.',
   };
 }
 
@@ -2297,6 +2599,8 @@ async function serializeVpnSession(
     publicIp: string | null;
     connectedAt: Date | null;
     lastHeartbeatAt: Date | null;
+    lastHandshakeAt?: Date | null;
+    lastError?: string | null;
     bytesIn: bigint | null;
     bytesOut: bigint | null;
     disconnectedAt: Date | null;
@@ -2314,15 +2618,46 @@ async function serializeVpnSession(
       orderBy: { revision: 'desc' },
     }),
   ]);
-  const server =
-    (session.serverId == null
+  const activeSelectableProfile =
+    activeProfile != null && isSelectableServerRecord(activeProfile.vpnServer)
+      ? activeProfile
+      : null;
+  const sessionServer =
+    session.serverId == null
       ? null
-      : await db.vpnServer.findUnique({ where: { id: session.serverId } })) ??
-    activeProfile?.vpnServer ??
-    (await db.vpnServer.findFirst({
-      where: { accountId: device.accountId, status: 'ACTIVE' },
-      orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
-    }));
+      : await db.vpnServer.findUnique({ where: { id: session.serverId } });
+  const server =
+    (sessionServer != null && isSelectableServerRecord(sessionServer)
+      ? sessionServer
+      : null) ??
+    activeSelectableProfile?.vpnServer ??
+    null;
+  const configuredServer = server == null ? null : resolveConfiguredServerForRecord(server);
+
+  if (server == null || configuredServer == null) {
+    return {
+      deviceId: session.deviceId,
+      tunnelState: 'DISCONNECTED',
+      connected: false,
+      profileInstalled: false,
+      profileRevision: 0,
+      serverId: '',
+      serverName: 'VPN not provisioned',
+      locationLabel: 'Provisioning required',
+      endpoint: '',
+      exitIpAddress: '',
+      currentIp: 'Unavailable',
+      dnsMode: 'No live region provisioned',
+      connectedAt: null,
+      lastHeartbeatAt: session.lastHeartbeatAt?.toISOString() ?? null,
+      lastHandshakeAt: session.lastHandshakeAt?.toISOString() ?? null,
+      bytesReceived: Number(session.bytesIn ?? 0n),
+      bytesSent: Number(session.bytesOut ?? 0n),
+      sessionDurationSeconds: 0,
+      lastError:
+        session.lastError ?? 'No production-ready VPN region is configured for this account.',
+    };
+  }
 
   return {
     deviceId: session.deviceId,
@@ -2332,19 +2667,21 @@ async function serializeVpnSession(
     profileRevision: activeProfile?.revision ?? 0,
     serverId: server?.id ?? '',
     serverName: server?.name ?? 'Unassigned',
+    locationLabel: configuredServer?.locationLabel ?? server?.name ?? 'Unassigned',
     endpoint: server?.endpoint ?? '',
+    exitIpAddress: configuredServer?.exitIpAddress ?? '',
     currentIp: session.publicIp ?? 'Unavailable',
     dnsMode: session.status == 'CONNECTED' ? 'Private DNS via tunnel' : 'Tunnel down',
     connectedAt: session.connectedAt?.toISOString() ?? null,
     lastHeartbeatAt: session.lastHeartbeatAt?.toISOString() ?? null,
-    lastHandshakeAt: session.lastHeartbeatAt?.toISOString() ?? null,
+    lastHandshakeAt: session.lastHandshakeAt?.toISOString() ?? null,
     bytesReceived: Number(session.bytesIn ?? 0n),
     bytesSent: Number(session.bytesOut ?? 0n),
     sessionDurationSeconds:
       session.connectedAt == null
         ? 0
         : Math.max(0, Math.floor((Date.now() - session.connectedAt.getTime()) / 1000)),
-    lastError: null,
+    lastError: session.lastError ?? null,
   };
 }
 
@@ -2662,6 +2999,194 @@ function randomWireGuardKey() {
   return randomBytes(32).toString('base64');
 }
 
+function configuredVpnServers(): ConfiguredVpnServer[] {
+  const configuredCandidates = SERVER_TEMPLATES.map(
+    (template): ConfiguredVpnServer | null => {
+      const endpoint = template.endpoint.trim();
+      const publicKey = template.publicKey.trim();
+      const exitIpAddress = normalizeObservedIp(template.exitIpAddress);
+
+      if (endpoint.length == 0 || publicKey.length == 0 || exitIpAddress == null) {
+        return null;
+      }
+
+      const endpointParts = parseEndpoint(endpoint);
+      if (endpointParts == null) {
+        return null;
+      }
+
+      return {
+        name: template.name,
+        regionCode: template.regionCode,
+        locationLabel: template.locationLabel,
+        hostname: endpointParts.hostname,
+        endpoint,
+        port: endpointParts.port,
+        publicKey,
+        exitIpAddress,
+        dnsServers: parseDnsServers(template.dnsServers),
+        priority: template.priority,
+        isPrimary: false,
+      };
+    },
+  );
+  const configured = configuredCandidates.filter(
+    (server): server is ConfiguredVpnServer => server != null,
+  );
+
+  if (configured.length == 0) {
+    return [];
+  }
+
+  const preferredPrimary = env.VPN_SERVER_DEFAULT_REGION;
+  return configured.map((server, index) => ({
+    ...server,
+    isPrimary:
+      configured.some((candidate) => candidate.regionCode == preferredPrimary)
+        ? server.regionCode == preferredPrimary
+        : index == 0,
+  }));
+}
+
+function resolveConfiguredServerForRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+  endpoint?: string | null;
+  publicKey?: string | null;
+}) {
+  return configuredVpnServers().find(
+    (candidate) =>
+      candidate.regionCode == server.regionCode ||
+      candidate.name == server.name ||
+      candidate.endpoint == server.endpoint,
+  );
+}
+
+function isSelectableServerRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+  endpoint?: string | null;
+  publicKey?: string | null;
+}) {
+  return resolveConfiguredServerForRecord(server) != null;
+}
+
+function serializeVpnServerRecord(server: {
+  id: string;
+  name: string;
+  regionCode: string;
+  hostname: string;
+  endpoint: string;
+  port: number;
+  status: string;
+  isPrimary: boolean;
+  publicKey: string;
+}) {
+  const configured = resolveConfiguredServerForRecord(server);
+  if (configured == null) {
+    return null;
+  }
+
+  return {
+    id: server.id,
+    name: server.name,
+    regionCode: server.regionCode,
+    locationLabel: configured.locationLabel,
+    hostname: server.hostname,
+    endpoint: server.endpoint,
+    port: server.port,
+    status: server.status,
+    isPrimary: server.isPrimary,
+    selectable: true,
+    exitIpAddress: configured.exitIpAddress,
+    dnsServers: configured.dnsServers,
+  };
+}
+
+function parseEndpoint(endpoint: string) {
+  const [hostname, portValue] = endpoint.split(':');
+  if (hostname == null || hostname.trim().length == 0 || portValue == null) {
+    return null;
+  }
+
+  const port = Number(portValue);
+  if (!Number.isInteger(port) || port <= 0) {
+    return null;
+  }
+
+  return {
+    hostname: hostname.trim(),
+    port,
+  };
+}
+
+function parseDnsServers(rawValue: string) {
+  const servers = rawValue
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return servers.length == 0 ? ['1.1.1.1', '1.0.0.1'] : servers;
+}
+
+function normalizeObservedIp(value?: string | null) {
+  const normalized = value?.trim();
+  if (normalized == null || normalized.length == 0) {
+    return null;
+  }
+
+  return normalized.startsWith('::ffff:') ? normalized.slice(7) : normalized;
+}
+
+function parseIsoDate(value?: string | null) {
+  if (value == null || value.trim().length == 0) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function verifyObservedExitIp(
+  server:
+    | {
+        name?: string | null;
+        regionCode?: string | null;
+        endpoint?: string | null;
+        publicKey?: string | null;
+      }
+    | null,
+  observedIp: string | null,
+) {
+  const configured = server == null ? null : resolveConfiguredServerForRecord(server);
+  if (configured == null) {
+    return {
+      verified: false,
+      errorMessage: 'The selected VPN region is not fully configured.',
+    };
+  }
+
+  if (observedIp == null) {
+    return {
+      verified: false,
+      errorMessage: 'Unable to verify the tunnel exit IP.',
+    };
+  }
+
+  if (observedIp != configured.exitIpAddress) {
+    return {
+      verified: false,
+      errorMessage:
+        `Traffic is exiting from ${observedIp} instead of ${configured.locationLabel}.`,
+    };
+  }
+
+  return {
+    verified: true,
+    errorMessage: null,
+  };
+}
+
 function buildWireGuardConfig(input: {
   privateKey: string;
   assignedAddress: string;
@@ -2688,10 +3213,6 @@ function buildWireGuardConfig(input: {
 function tunnelNameForDevice(value: string) {
   const sanitized = value.replace(/[^a-zA-Z0-9_=+.-]/g, '').slice(0, 15);
   return sanitized.length == 0 ? 'labguard' : sanitized;
-}
-
-function defaultDnsServers() {
-  return ['10.66.0.1', '1.1.1.1'];
 }
 
 function formatLocationLabel(latitude: number, longitude: number) {
@@ -2725,6 +3246,18 @@ function tunnelStateToConnectivityStatus(tunnelState?: string): DeviceConnectivi
     default:
       return 'DISCONNECTED';
   }
+}
+
+function resolveHeartbeatStatus(input: {
+  tunnelState?: string;
+  verifiedExit: boolean;
+}): DeviceConnectivityStatus {
+  const baseStatus = tunnelStateToConnectivityStatus(input.tunnelState);
+  if (input.tunnelState == 'CONNECTED' && !input.verifiedExit) {
+    return 'DEGRADED';
+  }
+
+  return baseStatus;
 }
 
 function connectivityStatusToTunnelState(status: DeviceConnectivityStatus) {

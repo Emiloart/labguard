@@ -39,6 +39,11 @@ class AndroidVpnBridge {
     required String deviceId,
     required String tunnelName,
     required String serverId,
+    required String serverName,
+    required String locationLabel,
+    required String endpoint,
+    required String exitIpAddress,
+    required List<String> dnsServers,
     required int revision,
     required String config,
   }) async {
@@ -47,6 +52,11 @@ class AndroidVpnBridge {
           'deviceId': deviceId,
           'tunnelName': tunnelName,
           'serverId': serverId,
+          'serverName': serverName,
+          'locationLabel': locationLabel,
+          'endpoint': endpoint,
+          'exitIpAddress': exitIpAddress,
+          'dnsServers': dnsServers,
           'revision': revision,
           'config': config,
         });
