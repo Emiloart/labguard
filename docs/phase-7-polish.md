@@ -97,6 +97,6 @@ This document tracks the release-oriented polish pass for LabGuard. It does not 
 
 ## Known Remaining Non-Phase-7 Blockers
 
-- `services/api/src/common/mock/control-plane-data.ts` still exists and blocks a true production rollout.
+- The control plane still relies on seeded development bootstrap behavior and environment-gated VPN region provisioning.
 - Production keystore signing, production WireGuard server provisioning, and environment hardening are still external release gates.
-- The repository should still be treated as an internal trusted-user build until persistent production services replace the remaining mock data path.
+- The repository should still be treated as an internal trusted-user build until persistent production services replace the remaining development scaffolding.

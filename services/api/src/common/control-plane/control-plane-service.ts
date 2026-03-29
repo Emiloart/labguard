@@ -998,7 +998,9 @@ export async function listVpnServers(actor: LabGuardActor) {
   const servers = await prisma.vpnServer.findMany({
     where: {
       accountId: actor.accountId,
-      status: 'ACTIVE',
+      regionCode: {
+        in: SERVER_TEMPLATES.map((template) => template.regionCode),
+      },
     },
     orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
   });
@@ -1729,62 +1731,52 @@ async function ensurePreferenceSeed(db: DbClient, userId: string) {
 
 async function ensureServerSeeds(db: DbClient, accountId: string) {
   const configuredServers = configuredVpnServers();
-
-  if (configuredServers.length == 0) {
-    await db.vpnServer.updateMany({
-      where: {
-        accountId,
-        status: 'ACTIVE',
-      },
-      data: {
-        status: 'DISABLED',
-        isPrimary: false,
-      },
-    });
-
-    return [];
-  }
+  const configuredByRegion = new Map(
+    configuredServers.map((server) => [server.regionCode, server] as const),
+  );
 
   await Promise.all(
-    configuredServers.map((server) =>
-      db.vpnServer.upsert({
+    SERVER_TEMPLATES.map((template) => {
+      const configured = configuredByRegion.get(template.regionCode);
+
+      return db.vpnServer.upsert({
         where: {
           accountId_name: {
             accountId,
-            name: server.name,
+            name: template.name,
           },
         },
         update: {
-          endpoint: server.endpoint,
-          hostname: server.hostname,
-          regionCode: server.regionCode,
-          publicKey: server.publicKey,
-          isPrimary: server.isPrimary,
-          status: 'ACTIVE',
-          priority: server.priority,
-          port: server.port,
+          endpoint: configured?.endpoint ?? '',
+          hostname: configured?.hostname ?? '',
+          regionCode: template.regionCode,
+          publicKey: configured?.publicKey ?? '',
+          isPrimary: configured?.isPrimary ?? false,
+          status: configured == null ? 'DISABLED' : 'ACTIVE',
+          priority: template.priority,
+          port: configured?.port ?? 51820,
         },
         create: {
           accountId,
-          name: server.name,
-          regionCode: server.regionCode,
-          hostname: server.hostname,
-          endpoint: server.endpoint,
-          port: server.port,
-          publicKey: server.publicKey,
-          isPrimary: server.isPrimary,
-          status: 'ACTIVE',
-          priority: server.priority,
+          name: template.name,
+          regionCode: template.regionCode,
+          hostname: configured?.hostname ?? '',
+          endpoint: configured?.endpoint ?? '',
+          port: configured?.port ?? 51820,
+          publicKey: configured?.publicKey ?? '',
+          isPrimary: configured?.isPrimary ?? false,
+          status: configured == null ? 'DISABLED' : 'ACTIVE',
+          priority: template.priority,
         },
-      }),
-    ),
+      });
+    }),
   );
 
   await db.vpnServer.updateMany({
     where: {
       accountId,
       name: {
-        notIn: configuredServers.map((server) => server.name),
+        notIn: SERVER_TEMPLATES.map((template) => template.name),
       },
     },
     data: {
@@ -1797,6 +1789,9 @@ async function ensureServerSeeds(db: DbClient, accountId: string) {
     where: {
       accountId,
       status: 'ACTIVE',
+      regionCode: {
+        in: SERVER_TEMPLATES.map((template) => template.regionCode),
+      },
     },
     orderBy: [{ isPrimary: 'desc' }, { priority: 'asc' }],
   });
@@ -3062,6 +3057,18 @@ function resolveConfiguredServerForRecord(server: {
   );
 }
 
+function resolveDeclaredServerTemplateForRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+}) {
+  return (
+    SERVER_TEMPLATES.find(
+      (template) =>
+        template.regionCode == server.regionCode || template.name == server.name,
+    ) ?? null
+  );
+}
+
 function isSelectableServerRecord(server: {
   name?: string | null;
   regionCode?: string | null;
@@ -3082,24 +3089,26 @@ function serializeVpnServerRecord(server: {
   isPrimary: boolean;
   publicKey: string;
 }) {
-  const configured = resolveConfiguredServerForRecord(server);
-  if (configured == null) {
+  const declared = resolveDeclaredServerTemplateForRecord(server);
+  if (declared == null) {
     return null;
   }
+
+  const configured = resolveConfiguredServerForRecord(server);
 
   return {
     id: server.id,
     name: server.name,
     regionCode: server.regionCode,
-    locationLabel: configured.locationLabel,
-    hostname: server.hostname,
-    endpoint: server.endpoint,
-    port: server.port,
-    status: server.status,
+    locationLabel: configured?.locationLabel ?? declared.locationLabel,
+    hostname: configured?.hostname ?? server.hostname,
+    endpoint: configured?.endpoint ?? '',
+    port: configured?.port ?? server.port,
+    status: configured == null ? 'DISABLED' : server.status,
     isPrimary: server.isPrimary,
-    selectable: true,
-    exitIpAddress: configured.exitIpAddress,
-    dnsServers: configured.dnsServers,
+    selectable: configured != null && server.status == 'ACTIVE',
+    exitIpAddress: configured?.exitIpAddress ?? '',
+    dnsServers: configured?.dnsServers ?? parseDnsServers(declared.dnsServers),
   };
 }
 

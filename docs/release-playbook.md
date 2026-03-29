@@ -10,7 +10,7 @@ Reference the UI polish and accessibility conventions in `docs/phase-7-polish.md
 
 The following conditions must be true before a production-tagged build is distributed:
 
-- Replace `services/api/src/common/mock/control-plane-data.ts` with persistent production services for auth, device state, VPN provisioning, remote command status, and audit storage.
+- Replace the remaining seeded development control-plane behavior with persistent production services for auth, device state, VPN provisioning, remote command status, and audit storage.
 - Keep refresh tokens hashed at rest and encrypt VPN private material in the production control plane.
 - Provision every advertised WireGuard region with real endpoint metadata, exit-IP verification, and documented rotation and revocation procedures.
 - Configure `VPN_SERVER_LONDON_*` and `VPN_SERVER_SF_*` with deployed remote infrastructure before enabling region switching in release builds.
@@ -82,4 +82,4 @@ If a release regresses VPN safety, device trust enforcement, or remote command h
 
 ## Current Repository Note
 
-The UI, Android runtime, and control-plane contracts are shaped for production use, but the repository still contains mock backend state for development. Treat current builds as internal engineering or operator preview builds until the mock services are removed. Region switching is now gated by real endpoint metadata, but persistent provisioning and audit storage still remain a production blocker.
+The UI, Android runtime, and control-plane contracts are shaped for production use, but the repository still contains seeded development behavior for account bootstrap and environment-gated VPN provisioning. Treat current builds as internal engineering or operator preview builds until persistent production services fully replace the remaining development scaffolding. Region switching is gated by real endpoint metadata, but persistent provisioning and audit storage still remain a production blocker.

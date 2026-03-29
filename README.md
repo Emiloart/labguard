@@ -39,13 +39,13 @@ labguard/
 - Phases 1 through 7 are scaffolded across the Flutter app, Android runtime layer, and Fastify control plane.
 - The mobile app now covers branding, onboarding, auth restore, VPN control, device registry, lost-device workflows, remote security actions, audit visibility, Android runtime posture checks, and background hardening.
 - The Android layer includes WireGuard integration, foreground runtime service handling, WorkManager-based background sync, boot recovery, and explicit permission/system-settings handoff.
-- The backend exposes modular auth, devices, VPN, preferences, remote actions, security events, and audit endpoints against a mock control-plane dataset.
+- The backend exposes modular auth, devices, VPN, preferences, remote actions, security events, and audit endpoints through a seeded development control plane backed by Prisma.
 - Release polish now includes global motion tuning, accessibility-oriented screen headers, a stronger About surface, and release playbook documentation.
 
 ## Release Readiness
 
 - Release playbook: [docs/release-playbook.md](docs/release-playbook.md)
-- Current limitation: `services/api/src/common/mock/control-plane-data.ts` is still a development mock. Replace it with persistent production services before any production rollout.
+- Current limitation: the control plane still relies on seeded development behavior for bootstrap and VPN provisioning. Replace that remaining development scaffolding with persistent production services before any production rollout.
 
 ## Next Commands
 

@@ -27,6 +27,8 @@ class VpnScreen extends ConsumerWidget {
     final settings = ref.watch(settingsControllerProvider);
     final control = sessionState.valueOrNull;
     final serverList = (servers.valueOrNull ?? const <VpnServerRecord>[])
+        .toList(growable: false);
+    final readyServers = serverList
         .where((server) => server.selectable)
         .toList(growable: false);
     final preferences = settings.valueOrNull?.preferences;
@@ -72,8 +74,10 @@ class VpnScreen extends ConsumerWidget {
     final busy = sessionState.isLoading;
     final selectedServerId =
         controlState.profile?.serverId ?? controlState.remoteSession.serverId;
-    final selectedServer = _findServer(serverList, selectedServerId);
-    final infrastructureReady = serverList.isNotEmpty;
+    final selectedServer =
+        _findServer(serverList, selectedServerId) ??
+        (readyServers.isNotEmpty ? readyServers.first : null);
+    final infrastructureReady = readyServers.isNotEmpty;
     final tunnelState = controlState.effectiveTunnelState;
     final statusText = infrastructureReady
         ? [
@@ -107,11 +111,11 @@ class VpnScreen extends ConsumerWidget {
                 const PanelHeader(
                   title: 'VPN infrastructure unavailable',
                   subtitle:
-                      'Tunnel controls stay hidden until a live region is ready.',
+                      'LabGuard shows the supported regions below, but tunnel controls stay disabled until a live region is ready.',
                 ),
                 const SizedBox(height: AppMetrics.contentGap),
                 Text(
-                  'London and San Francisco are not available yet.',
+                  'London and San Francisco are reserved for this account but are not live yet.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 16),
@@ -222,59 +226,57 @@ class VpnScreen extends ConsumerWidget {
             children: [
               const PanelHeader(
                 title: 'Server Registry',
-                subtitle: 'Only ready-to-use regions appear here.',
+                subtitle:
+                    'London and San Francisco remain visible here. Only live regions can be selected.',
               ),
               const SizedBox(height: 14),
               if (serverList.isEmpty)
                 const EmptyPanel(
-                  title: 'No regions are ready',
+                  title: 'No regions are available',
                   message:
-                      'Region switching will appear here once London or San Francisco is available.',
+                      'The supported regions will appear here once the server registry is available.',
                   icon: Icons.dns_outlined,
                 )
               else ...[
-                DropdownButtonFormField<String>(
-                  key: ValueKey(selectedServerId),
-                  initialValue: selectedServer?.id,
-                  items: [
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
                     for (final server in serverList)
-                      DropdownMenuItem<String>(
-                        value: server.id,
-                        child: Text(
-                          '${server.displayLabel} • ${server.locationLabel}',
-                        ),
+                      _RegionButton(
+                        server: server,
+                        selected: server.id == selectedServer?.id,
+                        busy: busy,
+                        onPressed: !server.selectable ||
+                                busy ||
+                                server.id == selectedServer?.id
+                            ? null
+                            : () => _handleServerChange(
+                                  context,
+                                  ref,
+                                  controller: vpnController,
+                                  server: server,
+                                  control: controlState,
+                                ),
                       ),
                   ],
-                  onChanged: busy || serverList.length < 2
-                      ? null
-                      : (value) {
-                          if (value == null || value == selectedServerId) {
-                            return;
-                          }
-
-                          _handleServerChange(
-                            context,
-                            ref,
-                            controller: vpnController,
-                            server: _findServer(serverList, value),
-                            control: controlState,
-                          );
-                        },
-                  decoration: const InputDecoration(labelText: 'Exit region'),
                 ),
                 const SizedBox(height: 12),
                 Text(
                   selectedServer == null
-                      ? 'The current region is no longer available.'
-                      : '${selectedServer.locationLabel}\nReady for secure routing through this region.',
+                      ? 'Select a live region once it becomes available.'
+                      : selectedServer.selectable
+                      ? '${selectedServer.locationLabel}\nReady for secure routing through this region.'
+                      : '${selectedServer.locationLabel}\nThis region is reserved but not live yet.',
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  controlState.profile?.note ??
-                      'No active WireGuard profile is installed on this device.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                if ((controlState.profile?.note ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    controlState.profile!.note,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ],
             ],
           ),
@@ -745,6 +747,95 @@ class _MetadataRow extends StatelessWidget {
             child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RegionButton extends StatelessWidget {
+  const _RegionButton({
+    required this.server,
+    required this.selected,
+    required this.busy,
+    required this.onPressed,
+  });
+
+  final VpnServerRecord server;
+  final bool selected;
+  final bool busy;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final borderColor = selected
+        ? LabGuardColors.info
+        : server.selectable
+        ? LabGuardColors.border
+        : LabGuardColors.textMuted;
+
+    return Semantics(
+      button: true,
+      enabled: server.selectable && !busy,
+      selected: selected,
+      label: '${server.name}, ${server.locationLabel}',
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 168),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(20),
+          child: AnimatedContainer(
+            duration: AppMetrics.quickDuration,
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: borderColor),
+              color: selected
+                  ? LabGuardColors.info.withValues(alpha: 0.10)
+                  : LabGuardColors.panelSoft,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        server.name,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
+                    StatusBadge(
+                      label: selected
+                          ? 'Selected'
+                          : server.selectable
+                          ? 'Live'
+                          : 'Offline',
+                      color: selected
+                          ? LabGuardColors.info
+                          : server.selectable
+                          ? LabGuardColors.success
+                          : LabGuardColors.textSecondary,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  server.locationLabel,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  server.selectable
+                      ? 'Ready to route traffic through this exit region.'
+                      : 'This region will stay unavailable until the live service is ready.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
