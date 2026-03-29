@@ -1,20 +1,28 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/config/app_environment.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_metrics.dart';
 import '../../../core/widgets/app_panel.dart';
 import '../../../core/widgets/brand_lockup.dart';
 import '../../../core/widgets/panel_header.dart';
 import '../../../core/widgets/screen_intro.dart';
+import '../../../core/widgets/state_panels.dart';
+import '../../../core/widgets/status_badge.dart';
+import '../application/about_runtime_status_provider.dart';
+import '../domain/about_runtime_status.dart';
 
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends ConsumerWidget {
   const AboutScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final versionParts = AppEnvironment.appVersion.split('+');
     final releaseVersion = versionParts.first;
     final buildNumber = versionParts.length > 1 ? versionParts.last : '1';
+    final runtimeStatus = ref.watch(aboutRuntimeStatusProvider);
 
     return ListView(
       padding: AppMetrics.pagePadding,
@@ -45,7 +53,25 @@ class AboutScreen extends StatelessWidget {
                 label: 'Platform',
                 value: 'Android-first Flutter client',
               ),
+              _AboutDetailRow(
+                label: 'Track',
+                value: AppEnvironment.releaseTrack,
+              ),
             ],
+          ),
+        ),
+        const SizedBox(height: AppMetrics.sectionGap),
+        runtimeStatus.when(
+          data: (status) => _RuntimeReadinessPanel(status: status),
+          loading: () => const LoadingPanel(
+            label: 'Checking service readiness',
+            message:
+                'Confirming that the control plane is reachable and that VPN regions are prepared.',
+          ),
+          error: (error, _) => ErrorPanel(
+            message:
+                "Can't check service readiness right now. Open LabGuard again after the API is reachable.",
+            onRetry: () => ref.invalidate(aboutRuntimeStatusProvider),
           ),
         ),
         const SizedBox(height: AppMetrics.sectionGap),
@@ -86,6 +112,112 @@ class AboutScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _RuntimeReadinessPanel extends StatelessWidget {
+  const _RuntimeReadinessPanel({required this.status});
+
+  final AboutRuntimeStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final serviceTone = status.reachable
+        ? LabGuardColors.success
+        : LabGuardColors.warning;
+
+    return AppPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          PanelHeader(
+            title: 'Service Readiness',
+            subtitle: status.summary,
+            trailing: StatusBadge(
+              label: status.reachable ? 'Reachable' : 'Check service',
+              color: serviceTone,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _AboutDetailRow(label: 'Control plane', value: 'LabGuard API reachable'),
+          _AboutDetailRow(
+            label: 'Release stage',
+            value: status.stage == 'operator_preview'
+                ? 'Operator preview'
+                : status.stage,
+          ),
+          _AboutDetailRow(
+            label: 'Backend mode',
+            value: status.seededBootstrapActive
+                ? 'Seeded internal preview'
+                : 'Persistent production mode',
+          ),
+          const SizedBox(height: 6),
+          for (final region in status.vpnRegions) ...[
+            const SizedBox(height: 10),
+            _RegionReadinessRow(region: region),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RegionReadinessRow extends StatelessWidget {
+  const _RegionReadinessRow({required this.region});
+
+  final AboutRuntimeRegion region;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = region.ready
+        ? LabGuardColors.success
+        : switch (region.availabilityState) {
+            'incomplete_config' || 'invalid_config' => LabGuardColors.warning,
+            _ => LabGuardColors.textSecondary,
+          };
+    final label = region.ready
+        ? 'Ready'
+        : switch (region.availabilityState) {
+            'incomplete_config' => 'Setup incomplete',
+            'invalid_config' => 'Config issue',
+            _ => 'Not live',
+          };
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppMetrics.tileRadius),
+        border: Border.all(color: LabGuardColors.border),
+        color: LabGuardColors.panelSoft,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  region.name,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              StatusBadge(label: label, color: color),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            region.locationLabel,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            region.availabilityMessage,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
     );
   }
 }

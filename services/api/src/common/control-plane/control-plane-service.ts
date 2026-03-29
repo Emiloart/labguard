@@ -41,6 +41,21 @@ type ConfiguredVpnServer = {
   isPrimary: boolean;
 };
 
+type PublicVpnRegionReadiness = {
+  regionCode: 'uk-lon' | 'us-sfo';
+  name: string;
+  locationLabel: string;
+  ready: boolean;
+  availabilityState:
+    | 'ready'
+    | 'not_configured'
+    | 'incomplete_config'
+    | 'invalid_config'
+    | 'maintenance'
+    | 'disabled';
+  availabilityMessage: string;
+};
+
 const SERVER_TEMPLATES = [
   {
     name: 'UK — London',
@@ -2995,35 +3010,8 @@ function randomWireGuardKey() {
 }
 
 function configuredVpnServers(): ConfiguredVpnServer[] {
-  const configuredCandidates = SERVER_TEMPLATES.map(
-    (template): ConfiguredVpnServer | null => {
-      const endpoint = template.endpoint.trim();
-      const publicKey = template.publicKey.trim();
-      const exitIpAddress = normalizeObservedIp(template.exitIpAddress);
-
-      if (endpoint.length == 0 || publicKey.length == 0 || exitIpAddress == null) {
-        return null;
-      }
-
-      const endpointParts = parseEndpoint(endpoint);
-      if (endpointParts == null) {
-        return null;
-      }
-
-      return {
-        name: template.name,
-        regionCode: template.regionCode,
-        locationLabel: template.locationLabel,
-        hostname: endpointParts.hostname,
-        endpoint,
-        port: endpointParts.port,
-        publicKey,
-        exitIpAddress,
-        dnsServers: parseDnsServers(template.dnsServers),
-        priority: template.priority,
-        isPrimary: false,
-      };
-    },
+  const configuredCandidates = SERVER_TEMPLATES.map((template) =>
+    describeServerTemplate(template).configuredServer,
   );
   const configured = configuredCandidates.filter(
     (server): server is ConfiguredVpnServer => server != null,
@@ -3041,6 +3029,110 @@ function configuredVpnServers(): ConfiguredVpnServer[] {
         ? server.regionCode == preferredPrimary
         : index == 0,
   }));
+}
+
+function describeServerTemplate(
+  template: (typeof SERVER_TEMPLATES)[number],
+): {
+  template: (typeof SERVER_TEMPLATES)[number];
+  configuredServer: ConfiguredVpnServer | null;
+  availabilityState:
+    | 'ready'
+    | 'not_configured'
+    | 'incomplete_config'
+    | 'invalid_config';
+  availabilityMessage: string;
+} {
+  const endpoint = template.endpoint.trim();
+  const publicKey = template.publicKey.trim();
+  const rawExitIp = template.exitIpAddress.trim();
+  const exitIpAddress = normalizeObservedIp(template.exitIpAddress);
+  const hasAnyValue =
+    endpoint.length > 0 || publicKey.length > 0 || rawExitIp.length > 0;
+
+  if (!hasAnyValue) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'not_configured' as const,
+      availabilityMessage:
+        'This region is reserved for this account but the live service is not configured yet.',
+    };
+  }
+
+  if (endpoint.length == 0 || publicKey.length == 0 || exitIpAddress == null) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'incomplete_config' as const,
+      availabilityMessage:
+        'This region has partial server details. Complete the region setup before testing it.',
+    };
+  }
+
+  const endpointParts = parseEndpoint(endpoint);
+  if (endpointParts == null) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'invalid_config' as const,
+      availabilityMessage:
+        'This region has an invalid server endpoint. Fix the deployment settings before using it.',
+    };
+  }
+
+  return {
+    template,
+    configuredServer: {
+      name: template.name,
+      regionCode: template.regionCode,
+      locationLabel: template.locationLabel,
+      hostname: endpointParts.hostname,
+      endpoint,
+      port: endpointParts.port,
+      publicKey,
+      exitIpAddress,
+      dnsServers: parseDnsServers(template.dnsServers),
+      priority: template.priority,
+      isPrimary: false,
+    },
+    availabilityState: 'ready' as const,
+    availabilityMessage: 'Ready to route traffic through this exit region.',
+  };
+}
+
+export function getPublicHealthSnapshot() {
+  const regions = SERVER_TEMPLATES.map((template) => {
+    const described = describeServerTemplate(template);
+    return {
+      regionCode: template.regionCode,
+      name: template.name,
+      locationLabel: template.locationLabel,
+      ready: described.availabilityState == 'ready',
+      availabilityState: described.availabilityState,
+      availabilityMessage: described.availabilityMessage,
+    } satisfies PublicVpnRegionReadiness;
+  });
+  const readyRegionCount = regions.filter((region) => region.ready).length;
+  const summary =
+    readyRegionCount == regions.length
+      ? 'Configured regions are ready for operator validation.'
+      : readyRegionCount == 0
+      ? 'VPN regions are not ready yet.'
+      : 'Some regions are ready, but release validation is still blocked.';
+
+  return {
+    status: 'ok' as const,
+    service: 'labguard-api',
+    brandAttribution: DEFAULT_BRAND_ATTRIBUTION,
+    timestamp: new Date().toISOString(),
+    readiness: {
+      stage: 'operator_preview',
+      summary,
+      seededBootstrapActive: true,
+      vpnRegions: regions,
+    },
+  };
 }
 
 function resolveConfiguredServerForRecord(server: {
@@ -3095,22 +3187,23 @@ function serializeVpnServerRecord(server: {
   }
 
   const configured = resolveConfiguredServerForRecord(server);
+  const describedTemplate = describeServerTemplate(declared);
   const availabilityState =
     configured == null
-      ? 'not_configured'
+      ? describedTemplate.availabilityState
       : server.status == 'MAINTENANCE'
       ? 'maintenance'
       : server.status == 'ACTIVE'
       ? 'ready'
       : 'disabled';
   const availabilityMessage =
-    availabilityState == 'ready'
+    configured == null
+      ? describedTemplate.availabilityMessage
+      : availabilityState == 'ready'
       ? 'Ready to route traffic through this exit region.'
       : availabilityState == 'maintenance'
       ? 'This region is temporarily unavailable while service maintenance is in progress.'
-      : availabilityState == 'disabled'
-      ? 'This region is currently unavailable for this account.'
-      : 'This region is reserved for this account but the live service is not configured yet.';
+      : 'This region is currently unavailable for this account.';
 
   return {
     id: server.id,
