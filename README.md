@@ -45,7 +45,7 @@ labguard/
 ## Release Readiness
 
 - Release playbook: [docs/release-playbook.md](docs/release-playbook.md)
-- Current limitation: the control plane still relies on seeded development behavior for bootstrap and VPN provisioning. Replace that remaining development scaffolding with persistent production services before any production rollout.
+- Current limitation: the control plane still relies on seeded development behavior for bootstrap and VPN provisioning. Replace that remaining development scaffolding with persistent production services before any production rollout. 
 
 ## Next Commands
 
