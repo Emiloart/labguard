@@ -11,3 +11,4 @@ Planned use:
 - OpenAPI-driven client generation
 - DTO and enum sharing across backend tooling and future admin surfaces
 - contract testing hooks
+planned upgrades coming soon 
