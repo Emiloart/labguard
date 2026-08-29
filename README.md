@@ -2,7 +2,7 @@
 
 LabGuard is a private Android-first security suite for Emilo Labs. The system combines a WireGuard-based VPN client, trusted-device management, explicit lost-device recovery flows, remote security actions, and a tightly controlled backend/control plane designed for a small high-trust user base.
 
-Brand attribution: Built by Emilo Labs
+Brand attribution: Built by Emilo Labs for Emilo Labs 
 
 ## Architecture Summary
 
