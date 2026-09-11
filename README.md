@@ -64,5 +64,3 @@ flutter run
 ```
 
 The Flutter toolchain in this environment did not complete dependency resolution during scaffolding, so mobile dependency installation still needs to be run locally before execution.
-
-
