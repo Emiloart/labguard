@@ -27,7 +27,7 @@ labguard/
     └── api/
 ```
 
-## Stack Decisions  
+## Stack Decisions   
 
 - Mobile UI: Flutter with Riverpod, go_router, Dio, secure local storage, and native Android integration points for VPN service work.
 - Backend: Fastify + TypeScript for a lean but structured control plane with modular route registration and strong request lifecycle control.
