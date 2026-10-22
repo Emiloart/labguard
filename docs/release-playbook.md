@@ -2,84 +2,112 @@
 
 ## Scope
 
-LabGuard is an internal, Android-first private security suite for Emilo Labs. Releases are for a small trusted user base only. Do not treat the current repository as a public consumer rollout candidate.
+LabGuard is an internal, Android-first private security suite for Emilo Labs and a small invited user base. Do not treat the current repository as a public consumer rollout candidate.
 
-Reference the UI polish and accessibility conventions in `docs/phase-7-polish.md` during final release review.
+The project has completed a Phase 7 polish pass, but physical-device testing has identified functional and operational blockers. Visual polish is not release readiness. Track remediation in [field-test findings](field-test-findings.md) and use [Phase 7 polish notes](phase-7-polish.md) for UI/accessibility conventions.
 
 ## Release Gates
 
-The following conditions must be true before a production-tagged build is distributed:
+Every gate below must pass before a production-tagged build is distributed.
 
-- Replace the remaining seeded development control-plane behavior with persistent production services for auth, device state, VPN provisioning, remote command status, and audit storage.
-- Keep refresh tokens hashed at rest and encrypt VPN private material in the production control plane.
-- Provision every advertised WireGuard region with real endpoint metadata, exit-IP verification, and documented rotation and revocation procedures.
-- Configure `VPN_SERVER_LONDON_*` and `VPN_SERVER_SF_*` with deployed remote infrastructure before enabling region switching in release builds.
-- Remove emulator-only or laptop-only API/VPN endpoints from the release environment. A release candidate must function when the operator laptop is offline.
-- Sign the Android app with the production keystore and verify package identity `com.emilolabs.labguard`.
-- Confirm Android notification, location, and battery-optimization flows on current target devices.
-- Validate the Always-on VPN and Block connections without VPN system path on supported Android builds.
+### Infrastructure and VPN correctness
+
+- [ ] Replace development/bootstrap control-plane behavior with reviewed persistent production services for authentication, device state, VPN provisioning, remote command status, and audit storage.
+- [ ] Keep refresh tokens hashed at rest and encrypt VPN private material in the production control plane.
+- [ ] Provision actual WireGuard exit nodes in **London, United Kingdom** and **San Francisco, United States**.
+- [ ] Configure `VPN_SERVER_LONDON_ENDPOINT`, `VPN_SERVER_LONDON_PUBLIC_KEY`, `VPN_SERVER_LONDON_EXIT_IP` and their `VPN_SERVER_SF_*` equivalents using verified infrastructure values.
+- [ ] Never commit actual secrets, private keys, access tokens, or server credentials. Server private keys must remain on their respective hosts.
+- [ ] Confirm the API and both VPN endpoints are remotely reachable and continue working with the operator laptop powered off.
+- [ ] Confirm each region has a real independent endpoint and server-specific profile; no mock labels, silent fallback, or Casablanca placeholder route.
+- [ ] Confirm real WireGuard handshake, DNS resolution, internet traffic, IPv4/IPv6 behavior, forwarding/NAT, firewall, and MTU behavior.
+- [ ] Verify observed public egress IP matches the selected region's confirmed exit IP.
+- [ ] Only expose a region as ready when its configuration is valid and its health/readiness checks pass.
+
+### Mobile behavior
+
+- [ ] Fix UI glitching and state-transition races on a physical Android device.
+- [ ] Fix the failure where enabling the VPN leaves internet traffic unavailable.
+- [ ] Do not report `Connected` until the tunnel is established and its operational state is verified.
+- [ ] Apply biometric prompts only to app unlock when enabled and explicitly configured sensitive operations. Routine navigation must not trigger biometrics.
+- [ ] Profile and reduce battery use from polling, reconnect loops, location updates, background sync, and unnecessary UI/native-channel events.
+- [ ] Confirm VPN foreground notification and Android system VPN settings behavior.
+- [ ] Validate process death, reboot, Wi-Fi/mobile-data transitions, airplane mode, and manual disconnect behavior.
+- [ ] Confirm location collection is explicit, visible, and limited to the intended lost-device policy.
+
+### Build and release hygiene
+
+- [ ] Sign the Android app with the production keystore and verify package identity `com.emilolabs.labguard`.
+- [ ] Confirm production configuration contains no emulator, localhost, or laptop-only endpoints.
+- [ ] Review privacy/location retention, permissions, remote action authorization, and audit behavior.
+- [ ] Run automated checks and preserve their output in the release record.
 
 ## Required Verification
 
-Run these checks before every release candidate:
+Run from the repository root (adjust toolchain paths to the machine executing the build):
 
 ```powershell
 cd apps/mobile
+flutter pub get
 flutter analyze
 flutter test
 
 cd ..\..\services\api
+pnpm install
 pnpm typecheck
 pnpm build
 pnpm exec prisma generate --schema prisma/schema.prisma
-$env:DATABASE_URL='postgresql://labguard:labguard@localhost:5432/labguard'
 pnpm exec prisma validate --schema prisma/schema.prisma
 
 cd ..\..\apps\mobile\android
-$env:JAVA_HOME='C:\Program Files\Android\Android Studio1\jbr'
 .\gradlew.bat :app:compileDebugKotlin
 ```
 
+Run API tests and migration checks against a disposable test database configured through environment variables. Do not paste production secrets into command history or logs.
+
 ## Manual Validation Matrix
 
-Validate these flows on at least one clean Android device and one previously approved device:
+Use at least one physical Android device. Include a second OEM/device model when available.
 
-1. First launch, splash, onboarding, login, session restore, and secure logout.
-2. Device approval, device list refresh, device detail history, and audit trail visibility.
-3. VPN permission request, profile install, connect, disconnect, reconnect after process death, and boot restore.
-4. Region switching: select London, confirm the issued profile endpoint and observed exit IP are London-specific, then repeat for San Francisco.
-5. Tunnel truth: the app must not show `Connected` until a real handshake is recorded and the observed exit IP matches the selected region.
-6. Deployment independence: with USB disconnected and the operator laptop offline, confirm the VPN can still connect through the deployed server set.
-7. Manual disconnect behavior: the tunnel must stay down until the operator reconnects or explicitly re-enables keep-connected intent.
-8. Kill-switch guidance: Android VPN settings must open correctly and the operator must be able to enable Always-on VPN and block-without-VPN from system settings.
-9. Lost-mode enablement, location permission handling, last-known location rendering, recovery message delivery, and recovered flow cleanup.
-10. Remote actions: sign out, revoke VPN, rotate session, wipe local data, ring alarm, and disable device access.
-11. Background runtime recovery: WorkManager sync, session refresh, remote command execution, and notification surfacing while the app is backgrounded.
-12. Empty, loading, and error states: dashboard, devices, events, audit, and find-device flows must all explain next steps without raw exception text or clipped layouts.
-13. Accessibility review: confirm TalkBack reads screen titles, icon-only controls, state chips, loading panels, and confirmation dialogs clearly.
-14. Text scale review: check common screens at larger font settings to confirm no critical action is clipped or pushed off-screen.
-15. Motion review: confirm shell navigation, splash entry, lock overlay, and action feedback feel stable and restrained without abrupt jumps.
-16. Battery review: confirm steady-state drain after 30 minutes with the app open, backgrounded, and in lost mode; normal mode must stay lower-noise than lost mode.
+1. First launch, splash, onboarding, login/invitation, session restore, and secure logout.
+2. Device approval, device list refresh, device detail history, and audit visibility.
+3. VPN permission request, profile installation, connect/disconnect, and status accuracy.
+4. London selection: inspect the active profile endpoint, establish a handshake, resolve DNS, load external sites, and verify observed public exit IP.
+5. Repeat the same independent checks for San Francisco.
+6. Confirm a missing or unhealthy region is unavailable and does not silently route through a different region.
+7. Turn off the operator laptop and disconnect USB debugging; verify the deployed API and VPN remain usable.
+8. Switch Wi-Fi to mobile data, toggle airplane mode, lock/unlock the phone, background/foreground the app, and test recovery after process death/reboot.
+9. Test manual disconnect and confirm the app does not unexpectedly reconnect against the user's explicit choice.
+10. Verify Android Always-on VPN and Block connections without VPN guidance opens the appropriate system settings where supported.
+11. Lost mode: location permission handling, timestamp/accuracy, unavailable GPS/network states, recovery message, and recovered-state cleanup.
+12. Remote actions: sign out, revoke VPN, rotate session/profile, wipe app-sensitive data, ring alarm, and disable access. Verify server authorization and audit outcomes.
+13. Biometrics: app unlock only when enabled; connect/disconnect and sensitive actions according to policy; ordinary navigation without prompts.
+14. Battery: compare 30-minute connected-idle, active-traffic, background, reconnect, and lost-mode behavior. Record baseline and observed measurements.
+15. UI stability: navigate repeatedly, change VPN state, receive status events, and inspect for jank, duplicate animations, stuck loading, and incorrect state.
+16. Accessibility: TalkBack, icon-only labels, status announcements, dialogs, and larger text sizes.
+17. Empty/loading/error states: dashboard, devices, events, audit, and find-device flows must give actionable guidance without raw exceptions or clipped layouts.
 
 ## Release Steps
 
-1. Freeze environment configuration for the target API and each release region endpoint.
-2. Run the full automated verification suite.
-3. Run the manual validation matrix on release devices.
-4. Build the signed Android artifact.
-5. Record artifact hash, version, environment, server target, and operator approver in the release log.
-6. Distribute only to approved trusted users.
+1. Freeze and review the release environment configuration.
+2. Verify server deployment, key custody, health, region egress, firewall, forwarding, and DNS.
+3. Run the full automated verification suite.
+4. Run and record the manual validation matrix.
+5. Build and sign the Android artifact.
+6. Record artifact hash, version, environment, selected server targets, verification results, and approver.
+7. Distribute only to approved trusted users.
 
 ## Rollback
 
 If a release regresses VPN safety, device trust enforcement, or remote command handling:
 
 1. Revoke affected device sessions and VPN profiles from the control plane.
-2. Halt further distribution of the current artifact.
-3. Restore the previous signed build.
+2. Halt further distribution.
+3. Restore the previous signed build or disable the affected region.
 4. Record the incident in audit and operations logs.
-5. Re-run the full validation matrix before reissuing a fixed build.
+5. Re-run the relevant validation matrix before reissuing a fixed build.
 
-## Current Repository Note
+## Current Repository Status
 
-The UI, Android runtime, and control-plane contracts are shaped for production use, but the repository still contains seeded development behavior for account bootstrap and environment-gated VPN provisioning. Treat current builds as internal engineering or operator preview builds until persistent production services fully replace the remaining development scaffolding. Region switching is gated by real endpoint metadata, but persistent provisioning and audit storage still remain a production blocker.
+The repository contains region configuration fields and readiness logic, but **real London and San Francisco infrastructure values have not been supplied in this workspace**. No real server deployment, endpoint, public key, or exit IP should be assumed. The repo also retains development/bootstrap behavior that needs a production review.
+
+Until the above gates pass, LabGuard remains an internal engineering/field-test build. Do not describe it as production-ready or advertise unprovisioned regions as available.
