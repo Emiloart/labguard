@@ -2,178 +2,106 @@
 
 ## Product Positioning
 
-LabGuard is a private infrastructure security product, not a mass-market VPN. The system is optimized for one owner account, a very small invited user base, per-device trust, explicit recovery operations, and auditable remote security control.
+LabGuard is a private infrastructure security product from Emilo Labs for an owner and a small invited user base. It combines a WireGuard-based VPN client with trusted-device management and explicit lost-device recovery. It is not a mass-market VPN at this stage.
 
-Brand attribution: Built by Emilo Labs
+**Brand attribution:** Built by Emilo Labs.
 
-## Final Stack
+## Technology Stack
 
 ### Mobile
 
-- Flutter for the application shell, shared feature modules, and future iOS portability
-- Kotlin for Android-specific integrations:
-  - `VpnService`
-  - WireGuard backend bridge
-  - foreground service lifecycle
-  - background-safe command execution hooks
-- Riverpod for explicit dependency injection and testable state management
-- `go_router` for structured navigation and auth-aware route redirection
-- Dio for API transport, token injection, retry policies, and telemetry-safe logging
-- `flutter_secure_storage` for tokens, VPN profile secrets, and app-lock material
-- `local_auth` for biometric unlock
-
-Why this stack:
-
-- Flutter gives Android-first velocity while preserving a clean path to iOS.
-- Riverpod avoids implicit global state and scales well across security-sensitive modules.
-- A Kotlin bridge keeps the VPN implementation isolated from the Flutter UI layer.
+- Flutter + Dart for UI and shared application features.
+- Kotlin for Android-specific integrations: `VpnService`, WireGuard backend bridge, foreground service lifecycle, and background execution hooks.
+- Java may appear where required by Android libraries or compatibility code; Kotlin is the primary native integration language.
+- Riverpod for state management and dependency injection.
+- `go_router` for navigation.
+- Dio for API transport.
+- `flutter_secure_storage` and platform-backed mechanisms for sensitive local material.
+- `local_auth` for biometric prompts governed by explicit action-level policy.
 
 ### Backend
 
-- Node.js + TypeScript
-- Fastify for a smaller, faster, highly controllable control plane
-- Zod for environment validation and request schema definition
-- Prisma for relational schema modeling and migrations against PostgreSQL
-- Pino-backed Fastify logging
+- Node.js + TypeScript.
+- Fastify for the API/control plane.
+- Zod for environment validation and request schemas.
+- Prisma for relational schema management and PostgreSQL access.
+- Pino-backed structured logging, with secret redaction.
 
-Why Fastify instead of a heavier framework:
+### Data and infrastructure
 
-- The product is operationally serious but still small-scope.
-- Fastify gives strict modularity without NestJS ceremony.
-- Security-sensitive request handling stays explicit: plugins, hooks, auth guards, audit insertion, and domain modules remain easy to trace.
-
-### Data / Infra
-
-- PostgreSQL as the system of record
-- One primary VPN server now, modeled as a registry for future multi-region expansion
-- FCM-ready notification architecture for Android security and command updates
-- Docker Compose development baseline for local PostgreSQL
+- PostgreSQL is the intended persistent system of record.
+- WireGuard is the tunnel protocol/engine; LabGuard must not invent custom cryptography or a custom VPN protocol.
+- London and San Francisco are the target exit regions. They are not operational until independently deployed and validated.
+- Docker Compose provides local development infrastructure only; local PostgreSQL is not production persistence.
+- The developer laptop is used for development and administration, never as a required runtime VPN endpoint.
 
 ## High-Level Architecture
 
 ```text
-Flutter App
-  ├─ Auth / Session Layer
-  ├─ Dashboard / Devices / Events / Settings
-  ├─ VPN Control UI
-  ├─ Lost Device UX
-  └─ Native Bridge (Kotlin)
-       ├─ WireGuard tunnel lifecycle
-       ├─ Android VpnService
-       ├─ foreground notifications
-       └─ background-safe command hooks
+Android device
+  Flutter/Dart UI
+    ├─ Authentication and account
+    ├─ VPN and region selection
+    ├─ Device registry / lost-device UX
+    ├─ Security events and settings
+    └─ narrow platform bridge
+         Kotlin / Android VpnService
+           WireGuard tunnel backend
+                 |
+                 | encrypted tunnel
+                 v
+        Deployed WireGuard exit node
+          London OR San Francisco
+                 |
+                 v
+              Internet
 
-Fastify API
-  ├─ Auth & Invitation Domain
-  ├─ Device Registry Domain
-  ├─ VPN Provisioning Domain
-  ├─ Remote Actions Domain
-  ├─ Security Events Domain
-  ├─ Admin Domain
-  └─ Audit / Observability Layer
-
+Flutter client
+    | HTTPS API
+    v
+Deployed Fastify API
+    |
+    v
 PostgreSQL
-  ├─ users / invitations / sessions
-  ├─ devices / device_sessions / locations
-  ├─ vpn_servers / vpn_profiles
-  ├─ remote_commands / results
-  ├─ security_events
-  └─ audit_logs / preferences
 ```
 
-## Main Domain Modules
+## Trust and Runtime Boundaries
 
-1. App Shell / Branding
-   Responsible for theme, navigation shell, launch experience, and Emilo Labs identity.
-2. Authentication & Account Access
-   Invitation acceptance, login, token lifecycle, device approval, app lock entry points.
-3. VPN Connection Core
-   Server selection, WireGuard profile delivery, tunnel status, reconnect policy, kill switch, DNS.
-4. Device Registry
-   Device inventory, trust state, metadata, approval, revoke, suspend, and rotation workflows.
-5. Lost Device / Find My Device
-   Explicit lost-mode state, last known location, elevated location cadence while lost, and recovery UX.
-6. Remote Security Actions
-   Signed-out, revoke VPN, rotate token/config, wipe app data, alarm, recovery message, disable access.
-7. Settings & Security Controls
-   Biometrics, PIN, auto-connect, kill switch, privacy controls, permissions, notification preferences.
-8. Admin / Control Plane
-   User invitations, device oversight, server assignment, event review, audit visibility.
-9. Notifications
-   Device events, unexpected disconnects, command status, trust changes, lost mode updates.
-10. Logging / Observability / Audit
-    Structured logs, event streams, command outcomes, security trail, and failure diagnostics.
+- **Client UI is not proof of tunnel health.** The app must distinguish requested, starting, handshaking, connected/verified, disconnected, and failed states according to signals available from the VPN backend.
+- **VPN traffic does not pass through the API.** The control plane authenticates users/devices and provisions profiles; the deployed WireGuard node carries tunneled traffic.
+- **Region selection must be real.** London and San Francisco need independent deployed endpoints and server-specific WireGuard profiles. A display label or environment variable alone does not make a region ready.
+- **Secrets stay on the right side of the boundary.** Server private keys stay on the server. Client private keys must not be exposed in logs or sent to unrelated API clients. The client receives only the server public key and its own authorized client configuration.
+- **Development is not production.** Seed/bootstrap behavior and local endpoints must not be enabled as production authentication or provisioning paths.
+- **Device location is explicit.** Location collection is permissioned and tied to the documented lost-device policy, with limited retention and access.
 
-## Repository Layout
+## Domain Modules
 
-```text
-labguard/
-├── apps/
-│   └── mobile/
-│       ├── android/
-│       ├── lib/
-│       │   └── src/
-│       │       ├── app/
-│       │       ├── core/
-│       │       ├── features/
-│       │       │   ├── auth/
-│       │       │   ├── dashboard/
-│       │       │   ├── devices/
-│       │       │   ├── events/
-│       │       │   ├── find_device/
-│       │       │   ├── onboarding/
-│       │       │   ├── settings/
-│       │       │   ├── splash/
-│       │       │   └── vpn/
-│       │       └── mock/
-│       └── test/
-├── docs/
-│   ├── api-design.md
-│   ├── architecture.md
-│   ├── build-plan.md
-│   ├── data-model.md
-│   └── security-checklist.md
-├── infra/
-│   └── docker/
-│       └── docker-compose.dev.yml
-├── packages/
-│   └── labguard_contracts/
-│       ├── README.md
-│       └── openapi/
-│           └── labguard.openapi.yaml
-└── services/
-    └── api/
-        ├── prisma/
-        │   └── schema.prisma
-        └── src/
-            ├── common/
-            ├── config/
-            └── modules/
-```
+1. App Shell / Branding: theme, navigation, launch experience, and Emilo Labs identity.
+2. Authentication & Account Access: invitations, sessions, device approval, and action-level app lock policy.
+3. VPN Connection Core: region selection, profile retrieval, tunnel lifecycle, DNS/routing configuration, and verified status.
+4. Device Registry: device inventory, trust state, approval, revoke, suspend, and rotation.
+5. Lost Device / Find My Device: explicit lost mode, last-known location, permitted update cadence, and recovery.
+6. Remote Security Actions: authenticated commands, delivery status, execution result, and audit trail.
+7. Settings & Security Controls: biometrics, PIN, auto-connect, system kill-switch guidance, permissions, and notifications.
+8. Control Plane: account, device, server readiness, profile issuance, events, and audit.
+9. Observability: redacted structured logs, health/readiness signals, and operational diagnostics.
 
-## Android VPN Integration Plan
+## Server Readiness Model
 
-The Flutter layer must not implement the tunnel itself. The plan is:
+A region should be offered only when all required endpoint values are valid and the deployment's health checks pass. At minimum, readiness must validate:
 
-1. Keep the VPN control UI, profile state, and policy configuration in Flutter.
-2. Expose a narrow Kotlin bridge for:
-   - tunnel start
-   - tunnel stop
-   - status polling/subscription
-   - profile install / rotate / revoke
-   - command-safe background wakeups
-3. Implement the actual Android tunnel lifecycle with:
-   - `VpnService`
-   - a dedicated foreground service notification
-   - WireGuard Android-compatible backend
-   - network callback handling for reconnect behavior
-4. Store private keys and session secrets only in secure local storage plus Android keystore-backed mechanisms where appropriate.
-5. Keep all telemetry explicit and minimized. Lost-mode location escalation is opt-in and auditable.
+- endpoint host and port;
+- server public key format;
+- confirmed expected public exit IP;
+- region-specific DNS policy;
+- server health and WireGuard service state;
+- profile generation using the selected region;
+- successful tunnel handshake and matching observed exit IP during release validation.
 
-## State Management Setup
+Missing configuration must produce an unavailable/not-configured state. It must never silently route the user to a different region or report a mock region as ready.
 
-- One provider layer per domain
-- Repository interfaces isolate API/storage dependencies from UI
-- Controllers own transient UI behavior and policy toggles
-- Secure material never lives in plain logs or serializable debug dumps
-- Future native VPN status streams can be bridged into Riverpod providers without leaking Android details across the app
+## Current Implementation and Known Gaps
+
+Real-device testing has identified UI glitching, loss of internet traffic after VPN activation, overly frequent biometric prompts, and excessive battery consumption. The real London and San Francisco server values and deployment access are not present in the workspace. These are active remediation items, not resolved architecture details.
+
+The control plane includes development/bootstrap behavior and must be reviewed for persistent production operation before release. Consult [field-test findings](field-test-findings.md) and [release playbook](release-playbook.md).
