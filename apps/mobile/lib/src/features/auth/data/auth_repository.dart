@@ -51,7 +51,7 @@ class AuthRepository {
 
   Future<AuthSession> login({
     required String identity,
-    String? inviteCode,
+    required String password,
   }) async {
     final device = await _deviceIdentityRepository.readCurrentDevice();
 
@@ -60,8 +60,7 @@ class AuthRepository {
         '/v1/auth/login',
         data: {
           'identity': identity,
-          if (inviteCode != null && inviteCode.isNotEmpty)
-            'inviteCode': inviteCode,
+          'password': password,
           'device': device.toJson(),
         },
         options: Options(extra: const {'skipAuth': true}),
@@ -84,6 +83,36 @@ class AuthRepository {
       throw ApiException(
         error.message ?? 'Unable to sign in to LabGuard right now.',
       );
+    }
+  }
+
+  Future<AuthSession> acceptInvitation({
+    required String identity,
+    required String inviteCode,
+    required String password,
+  }) async {
+    final device = await _deviceIdentityRepository.readCurrentDevice();
+    try {
+      final response = await _client.post<Map<String, dynamic>>(
+        '/v1/auth/invitations/accept',
+        data: {
+          'identity': identity,
+          'inviteCode': inviteCode,
+          'password': password,
+          'device': device.toJson(),
+        },
+        options: Options(extra: const {'skipAuth': true}),
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const ApiException('The server returned an empty invitation response.');
+      }
+      final session = AuthSession.fromEnvelope(payload);
+      await _sessionStore.writeSession(session);
+      await completeOnboarding();
+      return session;
+    } on DioException catch (error) {
+      throw ApiException(error.message ?? 'Unable to accept the LabGuard invitation.');
     }
   }
 

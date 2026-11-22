@@ -11,7 +11,7 @@ import {
   type UserRole,
   type VpnProfileStatus,
 } from '@prisma/client';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 
 import type { LabGuardActor } from '../auth/auth-types.js';
 import { prisma } from '../db/prisma.js';
@@ -20,7 +20,6 @@ import { env } from '../../config/env.js';
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const SESSION_TTL_DAYS = 30;
 const DEFAULT_BRAND_ATTRIBUTION = 'Built by Emilo Labs';
-const DEFAULT_INVITE_CODE = 'EMILO-TRUST-01';
 const DEMO_DEVICE_CLIENT_IDS = [
   'seed-primary-pixel',
   'seed-galaxy-s24',
@@ -93,6 +92,7 @@ export type DeviceRegistrationInput = {
 export type LoginInput = {
   identity?: string | undefined;
   inviteCode?: string | undefined;
+  password?: string | undefined;
   device?: Partial<DeviceRegistrationInput> | undefined;
   ipAddress?: string | undefined;
   userAgent?: string | undefined;
@@ -164,8 +164,9 @@ type SessionEnvelope = {
 
 export async function ensureSeedData() {
   const account = await ensureAccountSeed(prisma);
-  const owner = await ensureOwnerSeed(prisma, account.id);
-  await ensurePreferenceSeed(prisma, owner.id);
+  await revokeLegacyBootstrapInvitation(prisma, account.id);
+  const owner = await ensureBootstrapOwner(prisma, account.id);
+  if (owner != null) await ensurePreferenceSeed(prisma, owner.id);
   const provisionedServers = await ensureServerSeeds(prisma, account.id);
   await cleanupLegacyDemoData(prisma, account.id);
   await reconcileProvisionedVpnState(
@@ -173,7 +174,6 @@ export async function ensureSeedData() {
     account.id,
     provisionedServers.map((server) => server.id),
   );
-  await ensureInvitationSeed(prisma, account.id, owner.id);
 }
 
 export async function authenticateAccessToken(
@@ -220,170 +220,81 @@ export async function authenticateAccessToken(
 export async function acceptInvitation(input: AcceptInvitationInput) {
   const normalizedIdentity = normalizeIdentity(input.identity);
   const inviteCode = normalizeInviteCode(input.inviteCode);
-
-  if (inviteCode == null) {
-    throw badRequest('A valid invite code is required.');
-  }
-
+  const password = input.password ?? '';
+  if (inviteCode == null) throw badRequest('A valid invitation code is required.');
+  if (normalizedIdentity == null) throw badRequest('An email address is required.');
+  if (!isStrongPassword(password)) throw badRequest('Password must be at least 12 characters.');
   return prisma.$transaction(async (tx) => {
     const invitation = await tx.invitation.findFirst({
-      where: {
-        codeHash: hashInviteCode(inviteCode),
-        status: 'PENDING',
-        expiresAt: { gt: new Date() },
-      },
-      include: {
-        account: true,
-      },
+      where: { codeHash: hashInviteCode(inviteCode), status: 'PENDING', expiresAt: { gt: new Date() } },
+      include: { account: true },
     });
-
-    if (invitation == null) {
-      throw unauthorized('Invitation code is invalid or expired.');
+    if (invitation == null) throw unauthorized('Invitation code is invalid or expired.');
+    if (invitation.email != null && invitation.email.toLowerCase() != normalizedIdentity) {
+      throw unauthorized('This invitation was issued to a different email address.');
     }
-
-    const email = normalizedIdentity ?? invitation.email;
-    if (email == null) {
-      throw badRequest('Invitation acceptance requires an identity.');
+    const claimedInvitation = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: 'PENDING', expiresAt: { gt: new Date() } },
+      data: { status: 'ACCEPTED', acceptedAt: new Date() },
+    });
+    if (claimedInvitation.count !== 1) throw unauthorized('Invitation code is invalid or already used.');
+    const existing = await tx.user.findUnique({ where: { email: normalizedIdentity } });
+    if (existing != null && (existing.accountId !== invitation.accountId || existing.passwordHash != null)) {
+      throw unauthorized('This account already exists. Sign in with its password.');
     }
-
-    const user = await ensureMemberFromInvitation(tx, invitation, email);
+    const user = await ensureMemberFromInvitation(tx, invitation, normalizedIdentity, hashPassword(password));
     const device = await ensureDeviceForUser(tx, {
-      accountId: invitation.accountId,
-      userId: user.id,
-      userRole: user.role,
-      device: sanitizeDeviceRegistrationInput(input.device, email),
-      trustState: 'TRUSTED',
+      accountId: invitation.accountId, userId: user.id, userRole: user.role,
+      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity), trustState: 'TRUSTED',
     });
-
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: {
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
-      },
-    });
-
     const envelope = await createSessionEnvelope(tx, {
-      user,
-      device,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
+      user, device, ...optionalStringProperty('ipAddress', input.ipAddress),
       ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitAuditLog(tx, {
-      accountId: invitation.accountId,
-      actorUserId: user.id,
-      deviceId: device.id,
-      action: 'INVITATION_ACCEPTED',
-      targetType: 'AUTH',
-      targetId: invitation.id,
-      outcome: 'SUCCESS',
-      summary: 'A trusted invitation was accepted and a session was issued.',
-      ...optionalStringProperty('ipAddress', input.ipAddress),
-      ...optionalStringProperty('userAgent', input.userAgent),
+      accountId: invitation.accountId, actorUserId: user.id, deviceId: device.id,
+      action: 'INVITATION_ACCEPTED', targetType: 'AUTH', targetId: invitation.id,
+      outcome: 'SUCCESS', summary: 'An invitation was accepted and a password-protected session was issued.',
+      ...optionalStringProperty('ipAddress', input.ipAddress), ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitSecurityEvent(tx, {
-      accountId: invitation.accountId,
-      userId: user.id,
-      deviceId: device.id,
-      type: 'DEVICE_REGISTERED',
-      severity: 'INFO',
-      title: `${device.name} enrolled`,
+      accountId: invitation.accountId, userId: user.id, deviceId: device.id,
+      type: 'DEVICE_REGISTERED', severity: 'INFO', title: `${device.name} enrolled`,
       summary: 'An invited trusted device joined the LabGuard account.',
     });
-
-    return {
-      invitationAccepted: true,
-      deviceApprovalRequired: device.trustState != 'TRUSTED',
-      ...envelope,
-    };
+    return { invitationAccepted: true, deviceApprovalRequired: device.trustState != 'TRUSTED', ...envelope };
   });
 }
 
 export async function login(input: LoginInput) {
   const normalizedIdentity = normalizeIdentity(input.identity);
-
-  if (normalizedIdentity == null) {
-    throw badRequest('An identity is required to sign in.');
-  }
-
+  const password = input.password ?? '';
+  if (normalizedIdentity == null) throw badRequest('An email address is required.');
+  if (password.length == 0 || password.length > 256) throw unauthorized('Email or password is incorrect.');
   return prisma.$transaction(async (tx) => {
-    const owner = await ensureOwnerSeed(tx, (await ensureAccountSeed(tx)).id);
-    let user =
-      normalizedIdentity == owner.email
-        ? owner
-        : await tx.user.findUnique({
-            where: { email: normalizedIdentity },
-          });
-
-    if (user == null) {
-      const inviteCode = normalizeInviteCode(input.inviteCode);
-      if (inviteCode == null) {
-        throw unauthorized('This identity is not yet trusted. Use an invitation code.');
-      }
-
-      const invitation = await tx.invitation.findFirst({
-        where: {
-          codeHash: hashInviteCode(inviteCode),
-          status: 'PENDING',
-          expiresAt: { gt: new Date() },
-        },
-      });
-
-      if (invitation == null) {
-        throw unauthorized('Invitation code is invalid or expired.');
-      }
-
-      user = await ensureMemberFromInvitation(tx, invitation, normalizedIdentity);
-
-      await tx.invitation.update({
-        where: { id: invitation.id },
-        data: {
-          status: 'ACCEPTED',
-          acceptedAt: new Date(),
-        },
-      });
+    const user = await tx.user.findUnique({ where: { email: normalizedIdentity } });
+    if (user == null || !user.isActive || !verifyPassword(password, user.passwordHash)) {
+      throw unauthorized('Email or password is incorrect.');
     }
-
     const device = await ensureDeviceForUser(tx, {
-      accountId: user.accountId,
-      userId: user.id,
-      userRole: user.role,
-      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity),
-      trustState: 'TRUSTED',
+      accountId: user.accountId, userId: user.id, userRole: user.role,
+      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity), trustState: 'TRUSTED',
     });
-
     const envelope = await createSessionEnvelope(tx, {
-      user,
-      device,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
+      user, device, ...optionalStringProperty('ipAddress', input.ipAddress),
       ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitAuditLog(tx, {
-      accountId: user.accountId,
-      actorUserId: user.id,
-      deviceId: device.id,
-      action: 'LOGIN_SUCCEEDED',
-      targetType: 'AUTH',
-      targetId: user.id,
-      outcome: 'SUCCESS',
-      summary: `A trusted LabGuard session was issued for ${device.name}.`,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
-      ...optionalStringProperty('userAgent', input.userAgent),
+      accountId: user.accountId, actorUserId: user.id, deviceId: device.id,
+      action: 'LOGIN_SUCCEEDED', targetType: 'AUTH', targetId: user.id, outcome: 'SUCCESS',
+      summary: `A password-authenticated session was issued for ${device.name}.`,
+      ...optionalStringProperty('ipAddress', input.ipAddress), ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitSecurityEvent(tx, {
-      accountId: user.accountId,
-      userId: user.id,
-      deviceId: device.id,
-      type: 'DEVICE_REGISTERED',
-      severity: 'INFO',
-      title: `${device.name} authenticated`,
-      summary: 'A trusted device authenticated with the LabGuard control plane.',
+      accountId: user.accountId, userId: user.id, deviceId: device.id,
+      type: 'DEVICE_REGISTERED', severity: 'INFO', title: `${device.name} authenticated`,
+      summary: 'A password-authenticated device joined the LabGuard control plane.',
     });
-
     return envelope;
   });
 }
@@ -1693,6 +1604,17 @@ export async function issueInvitation(actor: LabGuardActor) {
   };
 }
 
+async function revokeLegacyBootstrapInvitation(db: DbClient, accountId: string) {
+  await db.invitation.updateMany({
+    where: {
+      accountId,
+      codeHash: hashInviteCode('EMILO-TRUST-01'),
+      status: 'PENDING',
+    },
+    data: { status: 'REVOKED' },
+  });
+}
+
 async function ensureAccountSeed(db: DbClient) {
   const existing = await db.account.findFirst({
     where: { name: 'Emilo Labs' },
@@ -1707,22 +1629,28 @@ async function ensureAccountSeed(db: DbClient) {
   });
 }
 
-async function ensureOwnerSeed(db: DbClient, accountId: string) {
-  const existing = await db.user.findUnique({
-    where: { email: 'owner@emilolabs.com' },
-  });
-
-  if (existing != null) {
-    return existing;
+async function ensureBootstrapOwner(db: DbClient, accountId: string) {
+  const email = env.LABGUARD_BOOTSTRAP_OWNER_EMAIL?.trim().toLowerCase();
+  const password = env.LABGUARD_BOOTSTRAP_OWNER_PASSWORD;
+  if ((email == null) !== (password == null)) throw new Error('Bootstrap owner email and password must be configured together.');
+  const existingOwner = await db.user.findFirst({ where: { accountId, role: 'OWNER' } });
+  if (existingOwner != null) {
+    if (existingOwner.passwordHash == null && email === existingOwner.email && password != null) {
+      if (!isStrongPassword(password)) throw new Error('Bootstrap owner password must be at least 12 characters.');
+      return db.user.update({ where: { id: existingOwner.id }, data: { passwordHash: hashPassword(password) } });
+    }
+    if (existingOwner.passwordHash == null && env.NODE_ENV === 'production') {
+      throw new Error('The existing owner has no password. Configure matching bootstrap owner credentials to initialize it.');
+    }
+    return existingOwner;
   }
-
+  if (email == null || password == null) {
+    if (env.NODE_ENV === 'production') throw new Error('No LabGuard owner exists. Configure bootstrap owner credentials for the initial deployment.');
+    return null;
+  }
+  if (!isStrongPassword(password)) throw new Error('Bootstrap owner password must be at least 12 characters.');
   return db.user.create({
-    data: {
-      accountId,
-      email: 'owner@emilolabs.com',
-      displayName: 'Emilo Owner',
-      role: 'OWNER',
-    },
+    data: { accountId, email, displayName: displayNameFromIdentity(email), role: 'OWNER', passwordHash: hashPassword(password) },
   });
 }
 
@@ -1812,29 +1740,6 @@ async function ensureServerSeeds(db: DbClient, accountId: string) {
   });
 }
 
-async function ensureInvitationSeed(db: DbClient, accountId: string, ownerUserId: string) {
-  const existing = await db.invitation.findFirst({
-    where: {
-      accountId,
-      status: 'PENDING',
-      codeHash: hashInviteCode(DEFAULT_INVITE_CODE),
-    },
-  });
-
-  if (existing != null) {
-    return existing;
-  }
-
-  return db.invitation.create({
-    data: {
-      accountId,
-      invitedByUserId: ownerUserId,
-      codeHash: hashInviteCode(DEFAULT_INVITE_CODE),
-      status: 'PENDING',
-      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
-    },
-  });
-}
 
 async function cleanupLegacyDemoData(db: DbClient, accountId: string) {
   const demoDevices = await db.device.findMany({
@@ -1979,13 +1884,17 @@ async function ensureMemberFromInvitation(
   db: DbClient,
   invitation: { accountId: string; id: string },
   email: string,
+  passwordHash: string,
 ) {
   const existing = await db.user.findUnique({
     where: { email },
   });
 
   if (existing != null) {
-    return existing;
+    if (existing.accountId !== invitation.accountId || existing.passwordHash != null) {
+      throw unauthorized('This account already exists. Sign in with its password.');
+    }
+    return db.user.update({ where: { id: existing.id }, data: { passwordHash } });
   }
 
   const member = await db.user.create({
@@ -1994,6 +1903,7 @@ async function ensureMemberFromInvitation(
       email,
       displayName: displayNameFromIdentity(email),
       role: 'MEMBER',
+      passwordHash,
     },
   });
   await ensurePreferenceSeed(db, member.id);
@@ -2973,7 +2883,27 @@ function hashAppPin(value: string) {
 }
 
 function timingSafeEqual(left: string, right: string) {
-  return left.length == right.length && left == right;
+  const a = Buffer.from(left); const b = Buffer.from(right);
+  return a.length === b.length && cryptoTimingSafeEqual(a, b);
+}
+
+function isStrongPassword(value: string) { return value.length >= 12 && value.length <= 256; }
+
+function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  const derived = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$16384$8$1$${salt.toString('hex')}$${derived.toString('hex')}`;
+}
+
+function verifyPassword(password: string, encoded: string | null) {
+  if (encoded == null) return false;
+  const [algorithm, n, r, p, saltHex, hashHex] = encoded.split('$');
+  if (algorithm !== 'scrypt' || n !== '16384' || r !== '8' || p !== '1' || !saltHex || !hashHex) return false;
+  try {
+    const expected = Buffer.from(hashHex, 'hex');
+    const actual = scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, { N: 16384, r: 8, p: 1 });
+    return expected.length === actual.length && cryptoTimingSafeEqual(expected, actual);
+  } catch { return false; }
 }
 
 function encryptSecret(value: string) {
