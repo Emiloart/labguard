@@ -51,7 +51,7 @@ class AuthRepository {
 
   Future<AuthSession> login({
     required String identity,
-    String? inviteCode,
+    required String password,
   }) async {
     final device = await _deviceIdentityRepository.readCurrentDevice();
 
@@ -60,8 +60,7 @@ class AuthRepository {
         '/v1/auth/login',
         data: {
           'identity': identity,
-          if (inviteCode != null && inviteCode.isNotEmpty)
-            'inviteCode': inviteCode,
+          'password': password,
           'device': device.toJson(),
         },
         options: Options(extra: const {'skipAuth': true}),
