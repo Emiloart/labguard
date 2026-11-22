@@ -78,7 +78,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 18),
-                    const Text('Email or handle'),
+                    const Text('Email address'),
                     const SizedBox(height: 12),
                     AutofillGroup(
                       child: TextField(
@@ -86,7 +86,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         autofillHints: const [AutofillHints.username],
                         textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
-                          hintText: 'owner@emilolabs.com',
+                          hintText: 'you@example.com',
                         ),
                       ),
                     ),
@@ -127,7 +127,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: authState.isBusy || _inviteCodeController.text.trim().isEmpty
+                onPressed: authState.isBusy
                     ? null
                     : () async {
                         await ref.read(authControllerProvider.notifier).acceptInvitation(
