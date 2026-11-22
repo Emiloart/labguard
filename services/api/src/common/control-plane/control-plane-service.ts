@@ -164,6 +164,7 @@ type SessionEnvelope = {
 
 export async function ensureSeedData() {
   const account = await ensureAccountSeed(prisma);
+  await revokeLegacyBootstrapInvitation(prisma, account.id);
   const owner = await ensureBootstrapOwner(prisma, account.id);
   if (owner != null) await ensurePreferenceSeed(prisma, owner.id);
   const provisionedServers = await ensureServerSeeds(prisma, account.id);
@@ -1597,6 +1598,17 @@ export async function issueInvitation(actor: LabGuardActor) {
     deliveryMode: 'MANUAL_CODE',
     inviteCode,
   };
+}
+
+async function revokeLegacyBootstrapInvitation(db: DbClient, accountId: string) {
+  await db.invitation.updateMany({
+    where: {
+      accountId,
+      codeHash: hashInviteCode('EMILO-TRUST-01'),
+      status: 'PENDING',
+    },
+    data: { status: 'REVOKED' },
+  });
 }
 
 async function ensureAccountSeed(db: DbClient) {
