@@ -11,7 +11,7 @@ import {
   type UserRole,
   type VpnProfileStatus,
 } from '@prisma/client';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 
 import type { LabGuardActor } from '../auth/auth-types.js';
 import { prisma } from '../db/prisma.js';
@@ -20,7 +20,6 @@ import { env } from '../../config/env.js';
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const SESSION_TTL_DAYS = 30;
 const DEFAULT_BRAND_ATTRIBUTION = 'Built by Emilo Labs';
-const DEFAULT_INVITE_CODE = 'EMILO-TRUST-01';
 const DEMO_DEVICE_CLIENT_IDS = [
   'seed-primary-pixel',
   'seed-galaxy-s24',
@@ -93,6 +92,7 @@ export type DeviceRegistrationInput = {
 export type LoginInput = {
   identity?: string | undefined;
   inviteCode?: string | undefined;
+  password?: string | undefined;
   device?: Partial<DeviceRegistrationInput> | undefined;
   ipAddress?: string | undefined;
   userAgent?: string | undefined;
@@ -164,8 +164,8 @@ type SessionEnvelope = {
 
 export async function ensureSeedData() {
   const account = await ensureAccountSeed(prisma);
-  const owner = await ensureOwnerSeed(prisma, account.id);
-  await ensurePreferenceSeed(prisma, owner.id);
+  const owner = await ensureBootstrapOwner(prisma, account.id);
+  if (owner != null) await ensurePreferenceSeed(prisma, owner.id);
   const provisionedServers = await ensureServerSeeds(prisma, account.id);
   await cleanupLegacyDemoData(prisma, account.id);
   await reconcileProvisionedVpnState(
@@ -173,7 +173,6 @@ export async function ensureSeedData() {
     account.id,
     provisionedServers.map((server) => server.id),
   );
-  await ensureInvitationSeed(prisma, account.id, owner.id);
 }
 
 export async function authenticateAccessToken(
@@ -220,170 +219,77 @@ export async function authenticateAccessToken(
 export async function acceptInvitation(input: AcceptInvitationInput) {
   const normalizedIdentity = normalizeIdentity(input.identity);
   const inviteCode = normalizeInviteCode(input.inviteCode);
-
-  if (inviteCode == null) {
-    throw badRequest('A valid invite code is required.');
-  }
+  const password = input.password ?? '';
+  if (inviteCode == null) throw badRequest('A valid invitation code is required.');
+  if (normalizedIdentity == null) throw badRequest('An email address is required.');
+  if (!isStrongPassword(password)) throw badRequest('Password must be at least 12 characters.');
 
   return prisma.$transaction(async (tx) => {
     const invitation = await tx.invitation.findFirst({
-      where: {
-        codeHash: hashInviteCode(inviteCode),
-        status: 'PENDING',
-        expiresAt: { gt: new Date() },
-      },
-      include: {
-        account: true,
-      },
+      where: { codeHash: hashInviteCode(inviteCode), status: 'PENDING', expiresAt: { gt: new Date() } },
+      include: { account: true },
     });
-
-    if (invitation == null) {
-      throw unauthorized('Invitation code is invalid or expired.');
+    if (invitation == null) throw unauthorized('Invitation code is invalid or expired.');
+    if (invitation.email != null && invitation.email.toLowerCase() != normalizedIdentity) {
+      throw unauthorized('This invitation was issued to a different email address.');
     }
+    const existing = await tx.user.findUnique({ where: { email: normalizedIdentity } });
+    if (existing != null) throw unauthorized('This account already exists. Sign in with its password.');
 
-    const email = normalizedIdentity ?? invitation.email;
-    if (email == null) {
-      throw badRequest('Invitation acceptance requires an identity.');
-    }
-
-    const user = await ensureMemberFromInvitation(tx, invitation, email);
+    const user = await ensureMemberFromInvitation(tx, invitation, normalizedIdentity, hashPassword(password));
     const device = await ensureDeviceForUser(tx, {
-      accountId: invitation.accountId,
-      userId: user.id,
-      userRole: user.role,
-      device: sanitizeDeviceRegistrationInput(input.device, email),
-      trustState: 'TRUSTED',
+      accountId: invitation.accountId, userId: user.id, userRole: user.role,
+      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity), trustState: 'TRUSTED',
     });
-
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: {
-        status: 'ACCEPTED',
-        acceptedAt: new Date(),
-      },
-    });
-
+    await tx.invitation.update({ where: { id: invitation.id }, data: { status: 'ACCEPTED', acceptedAt: new Date() } });
     const envelope = await createSessionEnvelope(tx, {
-      user,
-      device,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
+      user, device, ...optionalStringProperty('ipAddress', input.ipAddress),
       ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitAuditLog(tx, {
-      accountId: invitation.accountId,
-      actorUserId: user.id,
-      deviceId: device.id,
-      action: 'INVITATION_ACCEPTED',
-      targetType: 'AUTH',
-      targetId: invitation.id,
-      outcome: 'SUCCESS',
-      summary: 'A trusted invitation was accepted and a session was issued.',
-      ...optionalStringProperty('ipAddress', input.ipAddress),
-      ...optionalStringProperty('userAgent', input.userAgent),
+      accountId: invitation.accountId, actorUserId: user.id, deviceId: device.id,
+      action: 'INVITATION_ACCEPTED', targetType: 'AUTH', targetId: invitation.id,
+      outcome: 'SUCCESS', summary: 'An invitation was accepted and a password-protected session was issued.',
+      ...optionalStringProperty('ipAddress', input.ipAddress), ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitSecurityEvent(tx, {
-      accountId: invitation.accountId,
-      userId: user.id,
-      deviceId: device.id,
-      type: 'DEVICE_REGISTERED',
-      severity: 'INFO',
-      title: `${device.name} enrolled`,
+      accountId: invitation.accountId, userId: user.id, deviceId: device.id,
+      type: 'DEVICE_REGISTERED', severity: 'INFO', title: `${device.name} enrolled`,
       summary: 'An invited trusted device joined the LabGuard account.',
     });
-
-    return {
-      invitationAccepted: true,
-      deviceApprovalRequired: device.trustState != 'TRUSTED',
-      ...envelope,
-    };
+    return { invitationAccepted: true, deviceApprovalRequired: device.trustState != 'TRUSTED', ...envelope };
   });
 }
 
 export async function login(input: LoginInput) {
   const normalizedIdentity = normalizeIdentity(input.identity);
-
-  if (normalizedIdentity == null) {
-    throw badRequest('An identity is required to sign in.');
-  }
-
+  const password = input.password ?? '';
+  if (normalizedIdentity == null) throw badRequest('An email address is required.');
+  if (password.length == 0) throw unauthorized('Email or password is incorrect.');
   return prisma.$transaction(async (tx) => {
-    const owner = await ensureOwnerSeed(tx, (await ensureAccountSeed(tx)).id);
-    let user =
-      normalizedIdentity == owner.email
-        ? owner
-        : await tx.user.findUnique({
-            where: { email: normalizedIdentity },
-          });
-
-    if (user == null) {
-      const inviteCode = normalizeInviteCode(input.inviteCode);
-      if (inviteCode == null) {
-        throw unauthorized('This identity is not yet trusted. Use an invitation code.');
-      }
-
-      const invitation = await tx.invitation.findFirst({
-        where: {
-          codeHash: hashInviteCode(inviteCode),
-          status: 'PENDING',
-          expiresAt: { gt: new Date() },
-        },
-      });
-
-      if (invitation == null) {
-        throw unauthorized('Invitation code is invalid or expired.');
-      }
-
-      user = await ensureMemberFromInvitation(tx, invitation, normalizedIdentity);
-
-      await tx.invitation.update({
-        where: { id: invitation.id },
-        data: {
-          status: 'ACCEPTED',
-          acceptedAt: new Date(),
-        },
-      });
+    const user = await tx.user.findUnique({ where: { email: normalizedIdentity } });
+    if (user == null || !user.isActive || !verifyPassword(password, user.passwordHash)) {
+      throw unauthorized('Email or password is incorrect.');
     }
-
     const device = await ensureDeviceForUser(tx, {
-      accountId: user.accountId,
-      userId: user.id,
-      userRole: user.role,
-      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity),
-      trustState: 'TRUSTED',
+      accountId: user.accountId, userId: user.id, userRole: user.role,
+      device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity), trustState: 'TRUSTED',
     });
-
     const envelope = await createSessionEnvelope(tx, {
-      user,
-      device,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
+      user, device, ...optionalStringProperty('ipAddress', input.ipAddress),
       ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitAuditLog(tx, {
-      accountId: user.accountId,
-      actorUserId: user.id,
-      deviceId: device.id,
-      action: 'LOGIN_SUCCEEDED',
-      targetType: 'AUTH',
-      targetId: user.id,
-      outcome: 'SUCCESS',
-      summary: `A trusted LabGuard session was issued for ${device.name}.`,
-      ...optionalStringProperty('ipAddress', input.ipAddress),
-      ...optionalStringProperty('userAgent', input.userAgent),
+      accountId: user.accountId, actorUserId: user.id, deviceId: device.id,
+      action: 'LOGIN_SUCCEEDED', targetType: 'AUTH', targetId: user.id, outcome: 'SUCCESS',
+      summary: `A password-authenticated session was issued for ${device.name}.`,
+      ...optionalStringProperty('ipAddress', input.ipAddress), ...optionalStringProperty('userAgent', input.userAgent),
     });
-
     await emitSecurityEvent(tx, {
-      accountId: user.accountId,
-      userId: user.id,
-      deviceId: device.id,
-      type: 'DEVICE_REGISTERED',
-      severity: 'INFO',
-      title: `${device.name} authenticated`,
-      summary: 'A trusted device authenticated with the LabGuard control plane.',
+      accountId: user.accountId, userId: user.id, deviceId: device.id,
+      type: 'DEVICE_REGISTERED', severity: 'INFO', title: `${device.name} authenticated`,
+      summary: 'A password-authenticated device joined the LabGuard control plane.',
     });
-
     return envelope;
   });
 }
@@ -1707,22 +1613,25 @@ async function ensureAccountSeed(db: DbClient) {
   });
 }
 
-async function ensureOwnerSeed(db: DbClient, accountId: string) {
-  const existing = await db.user.findUnique({
-    where: { email: 'owner@emilolabs.com' },
-  });
-
-  if (existing != null) {
-    return existing;
+async function ensureBootstrapOwner(db: DbClient, accountId: string) {
+  const email = env.LABGUARD_BOOTSTRAP_OWNER_EMAIL?.trim().toLowerCase();
+  const password = env.LABGUARD_BOOTSTRAP_OWNER_PASSWORD;
+  if ((email == null) !== (password == null)) throw new Error('Bootstrap owner email and password must be configured together.');
+  const existingOwner = await db.user.findFirst({ where: { accountId, role: 'OWNER' } });
+  if (existingOwner != null) {
+    if (existingOwner.passwordHash == null && email === existingOwner.email && password != null) {
+      if (!isStrongPassword(password)) throw new Error('Bootstrap owner password must be at least 12 characters.');
+      return db.user.update({ where: { id: existingOwner.id }, data: { passwordHash: hashPassword(password) } });
+    }
+    return existingOwner;
   }
-
+  if (email == null || password == null) {
+    if (env.NODE_ENV === 'production') throw new Error('No LabGuard owner exists. Configure bootstrap owner credentials for the initial deployment.');
+    return null;
+  }
+  if (!isStrongPassword(password)) throw new Error('Bootstrap owner password must be at least 12 characters.');
   return db.user.create({
-    data: {
-      accountId,
-      email: 'owner@emilolabs.com',
-      displayName: 'Emilo Owner',
-      role: 'OWNER',
-    },
+    data: { accountId, email, displayName: displayNameFromIdentity(email), role: 'OWNER', passwordHash: hashPassword(password) },
   });
 }
 
@@ -1812,29 +1721,6 @@ async function ensureServerSeeds(db: DbClient, accountId: string) {
   });
 }
 
-async function ensureInvitationSeed(db: DbClient, accountId: string, ownerUserId: string) {
-  const existing = await db.invitation.findFirst({
-    where: {
-      accountId,
-      status: 'PENDING',
-      codeHash: hashInviteCode(DEFAULT_INVITE_CODE),
-    },
-  });
-
-  if (existing != null) {
-    return existing;
-  }
-
-  return db.invitation.create({
-    data: {
-      accountId,
-      invitedByUserId: ownerUserId,
-      codeHash: hashInviteCode(DEFAULT_INVITE_CODE),
-      status: 'PENDING',
-      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
-    },
-  });
-}
 
 async function cleanupLegacyDemoData(db: DbClient, accountId: string) {
   const demoDevices = await db.device.findMany({
@@ -1979,6 +1865,7 @@ async function ensureMemberFromInvitation(
   db: DbClient,
   invitation: { accountId: string; id: string },
   email: string,
+  passwordHash: string,
 ) {
   const existing = await db.user.findUnique({
     where: { email },
@@ -1994,6 +1881,7 @@ async function ensureMemberFromInvitation(
       email,
       displayName: displayNameFromIdentity(email),
       role: 'MEMBER',
+      passwordHash,
     },
   });
   await ensurePreferenceSeed(db, member.id);
@@ -2973,7 +2861,463 @@ function hashAppPin(value: string) {
 }
 
 function timingSafeEqual(left: string, right: string) {
-  return left.length == right.length && left == right;
+  const a = Buffer.from(left); const b = Buffer.from(right);
+  return a.length === b.length && cryptoTimingSafeEqual(a, b);
+}
+
+function isStrongPassword(value: string) { return value.length >= 12 && value.length <= 256; }
+
+function hashPassword(password: string) {
+  const salt = randomBytes(16);
+  const derived = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$16384$8$1${salt.toString('hex')}${derived.toString('hex')}`;
+}
+
+function verifyPassword(password: string, encoded: string | null) {
+  if (encoded == null) return false;
+  const [algorithm, n, r, p, saltHex, hashHex] = encoded.split('
+
+function encryptSecret(value: string) {
+  const key = createHash('sha256').update(env.JWT_REFRESH_SECRET).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+}
+
+function decryptSecret(value: string) {
+  const payload = Buffer.from(value, 'base64');
+  const iv = payload.subarray(0, 12);
+  const tag = payload.subarray(12, 28);
+  const encrypted = payload.subarray(28);
+  const key = createHash('sha256').update(env.JWT_REFRESH_SECRET).digest();
+  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
+
+function generateSessionTokens() {
+  return {
+    accessToken: randomBytes(24).toString('base64url'),
+    refreshToken: randomBytes(32).toString('base64url'),
+    accessTokenExpiresAt: new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000),
+    sessionExpiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60_000),
+  };
+}
+
+function randomWireGuardKey() {
+  return randomBytes(32).toString('base64');
+}
+
+function configuredVpnServers(): ConfiguredVpnServer[] {
+  const configuredCandidates = SERVER_TEMPLATES.map((template) =>
+    describeServerTemplate(template).configuredServer,
+  );
+  const configured = configuredCandidates.filter(
+    (server): server is ConfiguredVpnServer => server != null,
+  );
+
+  if (configured.length == 0) {
+    return [];
+  }
+
+  const preferredPrimary = env.VPN_SERVER_DEFAULT_REGION;
+  return configured.map((server, index) => ({
+    ...server,
+    isPrimary:
+      configured.some((candidate) => candidate.regionCode == preferredPrimary)
+        ? server.regionCode == preferredPrimary
+        : index == 0,
+  }));
+}
+
+function describeServerTemplate(
+  template: (typeof SERVER_TEMPLATES)[number],
+): {
+  template: (typeof SERVER_TEMPLATES)[number];
+  configuredServer: ConfiguredVpnServer | null;
+  availabilityState:
+    | 'ready'
+    | 'not_configured'
+    | 'incomplete_config'
+    | 'invalid_config';
+  availabilityMessage: string;
+} {
+  const endpoint = template.endpoint.trim();
+  const publicKey = template.publicKey.trim();
+  const rawExitIp = template.exitIpAddress.trim();
+  const exitIpAddress = normalizeObservedIp(template.exitIpAddress);
+  const hasAnyValue =
+    endpoint.length > 0 || publicKey.length > 0 || rawExitIp.length > 0;
+
+  if (!hasAnyValue) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'not_configured' as const,
+      availabilityMessage:
+        'This region is reserved for this account but the live service is not configured yet.',
+    };
+  }
+
+  if (endpoint.length == 0 || publicKey.length == 0 || exitIpAddress == null) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'incomplete_config' as const,
+      availabilityMessage:
+        'This region has partial server details. Complete the region setup before testing it.',
+    };
+  }
+
+  const endpointParts = parseEndpoint(endpoint);
+  if (endpointParts == null) {
+    return {
+      template,
+      configuredServer: null,
+      availabilityState: 'invalid_config' as const,
+      availabilityMessage:
+        'This region has an invalid server endpoint. Fix the deployment settings before using it.',
+    };
+  }
+
+  return {
+    template,
+    configuredServer: {
+      name: template.name,
+      regionCode: template.regionCode,
+      locationLabel: template.locationLabel,
+      hostname: endpointParts.hostname,
+      endpoint,
+      port: endpointParts.port,
+      publicKey,
+      exitIpAddress,
+      dnsServers: parseDnsServers(template.dnsServers),
+      priority: template.priority,
+      isPrimary: false,
+    },
+    availabilityState: 'ready' as const,
+    availabilityMessage: 'Ready to route traffic through this exit region.',
+  };
+}
+
+export function getPublicHealthSnapshot() {
+  const regions = SERVER_TEMPLATES.map((template) => {
+    const described = describeServerTemplate(template);
+    return {
+      regionCode: template.regionCode,
+      name: template.name,
+      locationLabel: template.locationLabel,
+      ready: described.availabilityState == 'ready',
+      availabilityState: described.availabilityState,
+      availabilityMessage: described.availabilityMessage,
+    } satisfies PublicVpnRegionReadiness;
+  });
+  const readyRegionCount = regions.filter((region) => region.ready).length;
+  const summary =
+    readyRegionCount == regions.length
+      ? 'Configured regions are ready for operator validation.'
+      : readyRegionCount == 0
+      ? 'VPN regions are not ready yet.'
+      : 'Some regions are ready, but release validation is still blocked.';
+
+  return {
+    status: 'ok' as const,
+    service: 'labguard-api',
+    brandAttribution: DEFAULT_BRAND_ATTRIBUTION,
+    timestamp: new Date().toISOString(),
+    readiness: {
+      stage: 'operator_preview',
+      summary,
+      seededBootstrapActive: true,
+      vpnRegions: regions,
+    },
+  };
+}
+
+function resolveConfiguredServerForRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+  endpoint?: string | null;
+  publicKey?: string | null;
+}) {
+  return configuredVpnServers().find(
+    (candidate) =>
+      candidate.regionCode == server.regionCode ||
+      candidate.name == server.name ||
+      candidate.endpoint == server.endpoint,
+  );
+}
+
+function resolveDeclaredServerTemplateForRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+}) {
+  return (
+    SERVER_TEMPLATES.find(
+      (template) =>
+        template.regionCode == server.regionCode || template.name == server.name,
+    ) ?? null
+  );
+}
+
+function isSelectableServerRecord(server: {
+  name?: string | null;
+  regionCode?: string | null;
+  endpoint?: string | null;
+  publicKey?: string | null;
+}) {
+  return resolveConfiguredServerForRecord(server) != null;
+}
+
+function serializeVpnServerRecord(server: {
+  id: string;
+  name: string;
+  regionCode: string;
+  hostname: string;
+  endpoint: string;
+  port: number;
+  status: string;
+  isPrimary: boolean;
+  publicKey: string;
+}) {
+  const declared = resolveDeclaredServerTemplateForRecord(server);
+  if (declared == null) {
+    return null;
+  }
+
+  const configured = resolveConfiguredServerForRecord(server);
+  const describedTemplate = describeServerTemplate(declared);
+  const availabilityState =
+    configured == null
+      ? describedTemplate.availabilityState
+      : server.status == 'MAINTENANCE'
+      ? 'maintenance'
+      : server.status == 'ACTIVE'
+      ? 'ready'
+      : 'disabled';
+  const availabilityMessage =
+    configured == null
+      ? describedTemplate.availabilityMessage
+      : availabilityState == 'ready'
+      ? 'Ready to route traffic through this exit region.'
+      : availabilityState == 'maintenance'
+      ? 'This region is temporarily unavailable while service maintenance is in progress.'
+      : 'This region is currently unavailable for this account.';
+
+  return {
+    id: server.id,
+    name: server.name,
+    regionCode: server.regionCode,
+    locationLabel: configured?.locationLabel ?? declared.locationLabel,
+    hostname: configured?.hostname ?? server.hostname,
+    endpoint: configured?.endpoint ?? '',
+    port: configured?.port ?? server.port,
+    status: configured == null ? 'DISABLED' : server.status,
+    isPrimary: server.isPrimary,
+    selectable: configured != null && server.status == 'ACTIVE',
+    availabilityState,
+    availabilityMessage,
+    exitIpAddress: configured?.exitIpAddress ?? '',
+    dnsServers: configured?.dnsServers ?? parseDnsServers(declared.dnsServers),
+  };
+}
+
+function parseEndpoint(endpoint: string) {
+  const [hostname, portValue] = endpoint.split(':');
+  if (hostname == null || hostname.trim().length == 0 || portValue == null) {
+    return null;
+  }
+
+  const port = Number(portValue);
+  if (!Number.isInteger(port) || port <= 0) {
+    return null;
+  }
+
+  return {
+    hostname: hostname.trim(),
+    port,
+  };
+}
+
+function parseDnsServers(rawValue: string) {
+  const servers = rawValue
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return servers.length == 0 ? ['1.1.1.1', '1.0.0.1'] : servers;
+}
+
+function normalizeObservedIp(value?: string | null) {
+  const normalized = value?.trim();
+  if (normalized == null || normalized.length == 0) {
+    return null;
+  }
+
+  return normalized.startsWith('::ffff:') ? normalized.slice(7) : normalized;
+}
+
+function parseIsoDate(value?: string | null) {
+  if (value == null || value.trim().length == 0) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function verifyObservedExitIp(
+  server:
+    | {
+        name?: string | null;
+        regionCode?: string | null;
+        endpoint?: string | null;
+        publicKey?: string | null;
+      }
+    | null,
+  observedIp: string | null,
+) {
+  const configured = server == null ? null : resolveConfiguredServerForRecord(server);
+  if (configured == null) {
+    return {
+      verified: false,
+      errorMessage: 'The selected VPN region is not fully configured.',
+    };
+  }
+
+  if (observedIp == null) {
+    return {
+      verified: false,
+      errorMessage: 'Unable to verify the tunnel exit IP.',
+    };
+  }
+
+  if (observedIp != configured.exitIpAddress) {
+    return {
+      verified: false,
+      errorMessage:
+        `Traffic is exiting from ${observedIp} instead of ${configured.locationLabel}.`,
+    };
+  }
+
+  return {
+    verified: true,
+    errorMessage: null,
+  };
+}
+
+function buildWireGuardConfig(input: {
+  privateKey: string;
+  assignedAddress: string;
+  dnsServers: string[];
+  serverPublicKey: string;
+  endpoint: string;
+}) {
+  return [
+    '[Interface]',
+    `PrivateKey = ${input.privateKey}`,
+    `Address = ${input.assignedAddress}`,
+    `DNS = ${input.dnsServers.join(', ')}`,
+    'MTU = 1280',
+    '',
+    '[Peer]',
+    `PublicKey = ${input.serverPublicKey}`,
+    'AllowedIPs = 0.0.0.0/0, ::/0',
+    `Endpoint = ${input.endpoint}`,
+    'PersistentKeepalive = 25',
+    '',
+  ].join('\n');
+}
+
+function tunnelNameForDevice(value: string) {
+  const sanitized = value.replace(/[^a-zA-Z0-9_=+.-]/g, '').slice(0, 15);
+  return sanitized.length == 0 ? 'labguard' : sanitized;
+}
+
+function formatLocationLabel(latitude: number, longitude: number) {
+  return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+}
+
+function extractCommandMessage(payload: Prisma.JsonValue | null) {
+  if (payload == null || typeof payload != 'object' || Array.isArray(payload)) {
+    return undefined;
+  }
+
+  return typeof payload['message'] == 'string' ? payload['message'] : undefined;
+}
+
+function latestCommandResultMessage(command: {
+  results: Array<{ errorMessage: string | null }>;
+}) {
+  return command.results[0]?.errorMessage ?? undefined;
+}
+
+function tunnelStateToConnectivityStatus(tunnelState?: string): DeviceConnectivityStatus {
+  switch (tunnelState) {
+    case 'CONNECTED':
+      return 'CONNECTED';
+    case 'ERROR':
+    case 'CONNECTING':
+    case 'AUTH_REQUIRED':
+      return 'DEGRADED';
+    case 'PROFILE_MISSING':
+    case 'DISCONNECTED':
+    default:
+      return 'DISCONNECTED';
+  }
+}
+
+function resolveHeartbeatStatus(input: {
+  tunnelState?: string;
+  verifiedExit: boolean;
+}): DeviceConnectivityStatus {
+  const baseStatus = tunnelStateToConnectivityStatus(input.tunnelState);
+  if (input.tunnelState == 'CONNECTED' && !input.verifiedExit) {
+    return 'DEGRADED';
+  }
+
+  return baseStatus;
+}
+
+function connectivityStatusToTunnelState(status: DeviceConnectivityStatus) {
+  switch (status) {
+    case 'CONNECTED':
+      return 'CONNECTED';
+    case 'DEGRADED':
+      return 'ERROR';
+    case 'UNKNOWN':
+    case 'DISCONNECTED':
+    default:
+      return 'DISCONNECTED';
+  }
+}
+
+function requireOwner(actor: LabGuardActor) {
+  if (actor.role != 'OWNER') {
+    throw forbidden('Owner access is required for this operation.');
+  }
+}
+
+function badRequest(message: string) {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+function unauthorized(message: string) {
+  return Object.assign(new Error(message), { statusCode: 401 });
+}
+
+function forbidden(message: string) {
+  return Object.assign(new Error(message), { statusCode: 403 });
+}
+
+function notFound(message: string) {
+  return Object.assign(new Error(message), { statusCode: 404 });
+}
+);
+  if (algorithm !== 'scrypt' || n !== '16384' || r !== '8' || p !== '1' || !saltHex || !hashHex) return false;
+  try { const expected = Buffer.from(hashHex, 'hex'); const actual = scryptSync(password, Buffer.from(saltHex, 'hex'), expected.length, { N: 16384, r: 8, p: 1 }); return expected.length === actual.length && cryptoTimingSafeEqual(expected, actual); } catch { return false; }
 }
 
 function encryptSecret(value: string) {
