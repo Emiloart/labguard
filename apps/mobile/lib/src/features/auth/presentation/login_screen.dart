@@ -17,19 +17,19 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   late final TextEditingController _identityController;
-  late final TextEditingController _inviteCodeController;
+  late final TextEditingController _passwordController;
 
   @override
   void initState() {
     super.initState();
-    _identityController = TextEditingController(text: 'owner@emilolabs.com');
-    _inviteCodeController = TextEditingController();
+    _identityController = TextEditingController();
+    _passwordController = TextEditingController();
   }
 
   @override
   void dispose() {
     _identityController.dispose();
-    _inviteCodeController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -88,14 +88,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text('Invite code'),
+                    const Text('Password'),
                     const SizedBox(height: 12),
                     TextField(
-                      controller: _inviteCodeController,
+                      controller: _passwordController,
+                      obscureText: true,
+                      autofillHints: const [AutofillHints.password],
                       textInputAction: TextInputAction.done,
-                      decoration: const InputDecoration(
-                        hintText: 'Optional trusted invite code',
-                      ),
+                      decoration: const InputDecoration(hintText: 'Your account password'),
                     ),
                   ],
                 ),
@@ -109,7 +109,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             .read(authControllerProvider.notifier)
                             .signIn(
                               identity: _identityController.text.trim(),
-                              inviteCode: _inviteCodeController.text.trim(),
+                              password: _passwordController.text,
                             );
                       },
                 child: Text(authState.isBusy ? 'Signing in...' : 'Continue'),
