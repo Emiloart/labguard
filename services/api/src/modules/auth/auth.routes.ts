@@ -22,7 +22,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     return authService.login({
       ...(typeof body['identity'] == 'string' ? { identity: body['identity'] } : {}),
-      ...(typeof body['inviteCode'] == 'string' ? { inviteCode: body['inviteCode'] } : {}),
+      ...(typeof body['password'] == 'string' ? { password: body['password'] } : {}),
       device: parseDeviceRegistration(body['device']),
       ipAddress: request.ip,
       userAgent: requestUserAgent(request),
