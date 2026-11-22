@@ -84,6 +84,29 @@ class AuthController extends Notifier<AuthSessionState> {
     }
   }
 
+  Future<void> acceptInvitation({
+    required String identity,
+    required String inviteCode,
+    required String password,
+  }) async {
+    state = state.copyWith(isBusy: true, clearError: true);
+    try {
+      final session = await ref.read(authRepositoryProvider).acceptInvitation(
+        identity: identity,
+        inviteCode: inviteCode,
+        password: password,
+      );
+      _invalidateAppData();
+      state = state.copyWith(stage: AuthStage.signedIn, session: session, isBusy: false, clearError: true);
+    } catch (error) {
+      state = state.copyWith(
+        stage: AuthStage.signedOut,
+        isBusy: false,
+        errorMessage: userFacingErrorMessage(error, fallback: 'Unable to accept this invitation.'),
+      );
+    }
+  }
+
   Future<void> restoreTrustedSession() async {
     state = state.copyWith(isBusy: true, clearError: true);
 
