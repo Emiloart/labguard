@@ -6,11 +6,11 @@ import { enforceAuthRateLimits } from '../src/common/auth/auth-rate-limit.js';
 
 describe('PostgreSQL-backed authentication rate limits', () => {
   before(async () => {
-    await prisma.$executeRaw\`DELETE FROM "AuthRateLimitBucket"\`;
+    await prisma.$executeRawUnsafe('DELETE FROM "AuthRateLimitBucket"');
   });
 
   after(async () => {
-    await prisma.$executeRaw\`DELETE FROM "AuthRateLimitBucket"\`;
+    await prisma.$executeRawUnsafe('DELETE FROM "AuthRateLimitBucket"');
     await prisma.$disconnect();
   });
 

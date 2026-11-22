@@ -22,7 +22,13 @@ LabGuard is a private Android-first security suite from Emilo Labs. It combines 
 
 ## Current Status
 
-LabGuard has a substantial application and API foundation, and Phase 7 polish work is documented. **Phase completion and UI polish do not establish operational or production readiness.** Real-device testing has identified release-blocking issues:
+LabGuard has a substantial application and API foundation. It is currently an **internal engineering / field-test build**, not a production-ready VPN service.
+
+P0 authentication hardening is implemented in the repository: password-based login, password-protected invitation acceptance, removal of the fixed seeded invitation, explicit owner bootstrap, and PostgreSQL-backed authentication throttling. Automated coverage is still incomplete, and the latest PostgreSQL-backed test run exposed a test-file syntax error that must be corrected and re-run.
+
+The Prisma migration history has no baseline migration. CI currently provisions a disposable schema with `prisma db push`; it does not prove that a fresh database can be built with `prisma migrate deploy`. Production migration is blocked until a reviewed baseline and existing-database adoption procedure are tested.
+
+Real-device testing has identified release-blocking issues:
 
 - UI glitching during use.
 - VPN can appear enabled while internet traffic does not work.
@@ -31,10 +37,11 @@ LabGuard has a substantial application and API foundation, and Phase 7 polish wo
 - Battery consumption is excessive and needs measurement and profiling.
 - Real exit-node switching is required for **UK — London** and **US — San Francisco**. Those regions are not ready until real server infrastructure is deployed and validated.
 
-The API configuration currently defines region variables, but the repository does not contain the real endpoint, server public key, or confirmed exit IP values. No values should be fabricated. The control plane also retains development/bootstrap behavior that must be reviewed and replaced or explicitly hardened before production use.
+The repository does not contain confirmed endpoint, server public key, or exit IP values for those regions. Do not fabricate configuration or claim deployment.
 
 See:
 - [Field-test findings and remediation plan](docs/field-test-findings.md)
+- [P0 authentication hardening](docs/security-p0-auth-hardening.md)
 - [System architecture](docs/architecture.md)
 - [Build plan](docs/build-plan.md)
 - [Security checklist](docs/security-checklist.md)
@@ -73,4 +80,4 @@ Use local development endpoints only for local testing. A release build must use
 
 ## Release Position
 
-Treat current builds as **internal engineering / field-test builds**, not production-ready releases, until the release gates in `docs/release-playbook.md` pass. In particular, do not advertise a region as available unless its real endpoint is configured, its server is healthy, the tunnel handshake succeeds, and observed egress matches the region.
+Do not advertise a region as available unless its real endpoint is configured, its server is healthy, the tunnel handshake succeeds, and observed egress matches the region. Do not deploy database migrations until the migration baseline and adoption procedure are validated.
