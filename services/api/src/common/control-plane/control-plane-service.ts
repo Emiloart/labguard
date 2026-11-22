@@ -1625,6 +1625,9 @@ async function ensureBootstrapOwner(db: DbClient, accountId: string) {
       if (!isStrongPassword(password)) throw new Error('Bootstrap owner password must be at least 12 characters.');
       return db.user.update({ where: { id: existingOwner.id }, data: { passwordHash: hashPassword(password) } });
     }
+    if (existingOwner.passwordHash == null && env.NODE_ENV === 'production') {
+      throw new Error('The existing owner has no password. Configure matching bootstrap owner credentials to initialize it.');
+    }
     return existingOwner;
   }
   if (email == null || password == null) {
