@@ -28,7 +28,7 @@ This change removes identity-only authentication and the fixed seeded invitation
 
 ## Release gates still required
 
-- Add automated tests for password hashing, invalid credentials, inactive users, invitation expiry, email-bound invitations, one-time invitation consumption, and legacy owner initialization.
+- Add and run behavioral integration tests for password hashing, invalid credentials, inactive users, invitation expiry, email-bound invitations, one-time invitation consumption, legacy owner initialization, and rate-limit concurrency.
 - Add distributed login rate limiting and abuse monitoring before public exposure.
 - Complete full device testing of the mobile password sign-in and invitation-acceptance flows.
 - Verify migration and bootstrap behavior against a disposable PostgreSQL database and the production-like deployment environment.
