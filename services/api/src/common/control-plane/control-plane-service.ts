@@ -234,7 +234,9 @@ export async function acceptInvitation(input: AcceptInvitationInput) {
       throw unauthorized('This invitation was issued to a different email address.');
     }
     const existing = await tx.user.findUnique({ where: { email: normalizedIdentity } });
-    if (existing != null) throw unauthorized('This account already exists. Sign in with its password.');
+    if (existing != null && (existing.accountId !== invitation.accountId || existing.passwordHash != null)) {
+      throw unauthorized('This account already exists. Sign in with its password.');
+    }
 
     const user = await ensureMemberFromInvitation(tx, invitation, normalizedIdentity, hashPassword(password));
     const device = await ensureDeviceForUser(tx, {
@@ -265,7 +267,7 @@ export async function login(input: LoginInput) {
   const normalizedIdentity = normalizeIdentity(input.identity);
   const password = input.password ?? '';
   if (normalizedIdentity == null) throw badRequest('An email address is required.');
-  if (password.length == 0) throw unauthorized('Email or password is incorrect.');
+  if (password.length == 0 || password.length > 256) throw unauthorized('Email or password is incorrect.');
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email: normalizedIdentity } });
     if (user == null || !user.isActive || !verifyPassword(password, user.passwordHash)) {
@@ -1569,7 +1571,7 @@ export async function listAuditLogs(actor: LabGuardActor) {
 export async function issueInvitation(actor: LabGuardActor) {
   requireOwner(actor);
 
-  const inviteCode = `LAB-${randomBytes(4).toString('hex').toUpperCase()}`;
+  const inviteCode = `LAB-${randomBytes(16).toString('hex').toUpperCase()}`;
   const invitation = await prisma.invitation.create({
     data: {
       accountId: actor.accountId,
