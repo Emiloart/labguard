@@ -18,12 +18,13 @@ This change removes identity-only authentication and the fixed seeded invitation
 ## Deployment procedure
 
 1. Back up the production database.
-2. Apply the Prisma migration before deploying the new API: `pnpm --dir services/api prisma:deploy`.
-3. For a first-time production database, configure both bootstrap owner variables with a unique email and a strong password of at least 12 characters before the API starts.
-4. For a database with the legacy `owner@emilolabs.com` owner record, set the bootstrap email to that exact account email and configure a strong password. Startup will populate the password hash only if it is currently null.
-5. Remove `LABGUARD_BOOTSTRAP_OWNER_EMAIL` and `LABGUARD_BOOTSTRAP_OWNER_PASSWORD` from the runtime environment after the owner password is initialized.
-6. Issue fresh invitation codes from the authenticated owner account for members who need to establish credentials.
-7. The migration revokes all active sessions created before password verification. The API startup also revokes any still-pending legacy fixed-code invitation when its former signing secret is unchanged. Review existing audit logs and access history.
+2. This incremental migration assumes the existing database already has the LabGuard tables from the current Prisma schema. The repository did not previously contain a baseline migration. Do not run this migration against an empty database; create and validate a baseline migration first for any fresh environment.
+3. Back up PostgreSQL, then apply the incremental migration: `pnpm --dir services/api prisma:deploy`.
+4. For a first-time production database, configure both bootstrap owner variables with a unique email and a strong password of at least 12 characters before the API starts.
+5. For a database with the legacy `owner@emilolabs.com` owner record, set the bootstrap email to that exact account email and configure a strong password. Startup will populate the password hash only if it is currently null.
+6. Remove `LABGUARD_BOOTSTRAP_OWNER_EMAIL` and `LABGUARD_BOOTSTRAP_OWNER_PASSWORD` from the runtime environment after the owner password is initialized.
+7. Issue fresh invitation codes from the authenticated owner account for members who need to establish credentials.
+8. The migration revokes all active sessions created before password verification. The API startup also revokes any still-pending legacy fixed-code invitation when its former signing secret is unchanged. Review existing audit logs and access history.
 
 ## Release gates still required
 
