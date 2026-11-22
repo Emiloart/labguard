@@ -86,6 +86,36 @@ class AuthRepository {
     }
   }
 
+  Future<AuthSession> acceptInvitation({
+    required String identity,
+    required String inviteCode,
+    required String password,
+  }) async {
+    final device = await _deviceIdentityRepository.readCurrentDevice();
+    try {
+      final response = await _client.post<Map<String, dynamic>>(
+        '/v1/auth/invitations/accept',
+        data: {
+          'identity': identity,
+          'inviteCode': inviteCode,
+          'password': password,
+          'device': device.toJson(),
+        },
+        options: Options(extra: const {'skipAuth': true}),
+      );
+      final payload = response.data;
+      if (payload == null) {
+        throw const ApiException('The server returned an empty invitation response.');
+      }
+      final session = AuthSession.fromEnvelope(payload);
+      await _sessionStore.writeSession(session);
+      await completeOnboarding();
+      return session;
+    } on DioException catch (error) {
+      throw ApiException(error.message ?? 'Unable to accept the LabGuard invitation.');
+    }
+  }
+
   Future<AuthSession> restoreTrustedSession() async {
     final storedSession = await _sessionStore.readSession();
 
