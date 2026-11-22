@@ -12,6 +12,7 @@ import {
   type VpnProfileStatus,
 } from '@prisma/client';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
+import { generateWireGuardKeyPair } from '../vpn/wireguard-keys.js';
 
 import type { LabGuardActor } from '../auth/auth-types.js';
 import { prisma } from '../db/prisma.js';
@@ -2143,8 +2144,7 @@ async function createVpnProfile(
     );
   }
 
-  const privateKey = randomWireGuardKey();
-  const publicKey = randomWireGuardKey();
+  const { privateKey, publicKey } = generateWireGuardKeyPair();
   const presharedKey = randomWireGuardKey();
   const assignedAddress = await nextAssignedAddress(db);
 
@@ -2933,10 +2933,6 @@ function generateSessionTokens() {
     accessTokenExpiresAt: new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000),
     sessionExpiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60_000),
   };
-}
-
-function randomWireGuardKey() {
-  return randomBytes(32).toString('base64');
 }
 
 function configuredVpnServers(): ConfiguredVpnServer[] {
