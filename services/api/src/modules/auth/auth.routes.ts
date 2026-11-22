@@ -1,9 +1,23 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { requireActor } from '../../common/auth/request-auth.js';
+import { enforceAuthRateLimits } from '../../common/auth/auth-rate-limit.js';
 import { authService } from './auth.service.js';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
+  app.addHook('preHandler', async (request, reply) => {
+    const route = request.routeOptions.url;
+    if (request.method !== 'POST' || (route !== '/login' && route !== '/invitations/accept')) return;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const identifier = route === '/login' ? (typeof body['identity'] === 'string' ? body['identity'] : undefined) : (typeof body['inviteCode'] === 'string' ? body['inviteCode'] : undefined);
+    try {
+      await enforceAuthRateLimits(request.ip, identifier, route === '/login' ? 'login' : 'invitation');
+    } catch (error) {
+      const retryAfter = error != null && typeof error === 'object' && 'retryAfterSeconds' in error ? Number(error.retryAfterSeconds) : 60;
+      reply.header('retry-after', String(Math.max(1, retryAfter)));
+      return reply.code(429).send({ error: 'TooManyRequests', message: 'Too many authentication attempts. Try again later.', requestId: request.id });
+    }
+  });
   app.post('/invitations/accept', async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
 
