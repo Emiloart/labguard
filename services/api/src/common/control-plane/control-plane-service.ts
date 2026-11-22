@@ -233,6 +233,11 @@ export async function acceptInvitation(input: AcceptInvitationInput) {
     if (invitation.email != null && invitation.email.toLowerCase() != normalizedIdentity) {
       throw unauthorized('This invitation was issued to a different email address.');
     }
+    const claimedInvitation = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: 'PENDING', expiresAt: { gt: new Date() } },
+      data: { status: 'ACCEPTED', acceptedAt: new Date() },
+    });
+    if (claimedInvitation.count !== 1) throw unauthorized('Invitation code is invalid or already used.');
     const existing = await tx.user.findUnique({ where: { email: normalizedIdentity } });
     if (existing != null && (existing.accountId !== invitation.accountId || existing.passwordHash != null)) {
       throw unauthorized('This account already exists. Sign in with its password.');
@@ -242,7 +247,6 @@ export async function acceptInvitation(input: AcceptInvitationInput) {
       accountId: invitation.accountId, userId: user.id, userRole: user.role,
       device: sanitizeDeviceRegistrationInput(input.device, normalizedIdentity), trustState: 'TRUSTED',
     });
-    await tx.invitation.update({ where: { id: invitation.id }, data: { status: 'ACCEPTED', acceptedAt: new Date() } });
     const envelope = await createSessionEnvelope(tx, {
       user, device, ...optionalStringProperty('ipAddress', input.ipAddress),
       ...optionalStringProperty('userAgent', input.userAgent),
