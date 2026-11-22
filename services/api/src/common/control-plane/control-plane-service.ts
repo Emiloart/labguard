@@ -2145,7 +2145,7 @@ async function createVpnProfile(
   }
 
   const { privateKey, publicKey } = generateWireGuardKeyPair();
-  const presharedKey = randomWireGuardKey();
+  const presharedKey = randomBytes(32).toString('base64');
   const assignedAddress = await nextAssignedAddress(db);
 
   return db.vpnProfile.create({
