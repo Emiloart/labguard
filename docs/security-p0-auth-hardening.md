@@ -18,18 +18,18 @@ This change removes identity-only authentication and the fixed seeded invitation
 ## Deployment procedure
 
 1. Back up the production database.
-2. Apply the Prisma migration before deploying the new API. Use the repository's deployment migration command for the target environment.
+2. Apply the Prisma migration before deploying the new API: `pnpm --dir services/api prisma:deploy`.
 3. For a first-time production database, configure both bootstrap owner variables with a unique email and a strong password of at least 12 characters before the API starts.
 4. For a database with the legacy `owner@emilolabs.com` owner record, set the bootstrap email to that exact account email and configure a strong password. Startup will populate the password hash only if it is currently null.
 5. Remove `LABGUARD_BOOTSTRAP_OWNER_EMAIL` and `LABGUARD_BOOTSTRAP_OWNER_PASSWORD` from the runtime environment after the owner password is initialized.
 6. Issue fresh invitation codes from the authenticated owner account for members who need to establish credentials.
-7. Revoke active sessions that may have been created through the former identity-only login path. Review existing audit logs and access history.
+7. The migration revokes all active sessions created before password verification. The API startup also revokes any still-pending legacy fixed-code invitation when its former signing secret is unchanged. Review existing audit logs and access history.
 
 ## Release gates still required
 
 - Add automated tests for password hashing, invalid credentials, inactive users, invitation expiry, email-bound invitations, one-time invitation consumption, and legacy owner initialization.
 - Add distributed login rate limiting and abuse monitoring before public exposure.
-- Add an authenticated invitation-acceptance flow to the mobile UI; the current mobile change covers password sign-in only.
+- Complete full device testing of the mobile password sign-in and invitation-acceptance flows.
 - Verify migration and bootstrap behavior against a disposable PostgreSQL database and the production-like deployment environment.
 - Review and rotate credentials or secrets that may have been exposed through earlier development defaults.
 
