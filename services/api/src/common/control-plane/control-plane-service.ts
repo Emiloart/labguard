@@ -1872,7 +1872,10 @@ async function ensureMemberFromInvitation(
   });
 
   if (existing != null) {
-    return existing;
+    if (existing.accountId !== invitation.accountId || existing.passwordHash != null) {
+      throw unauthorized('This account already exists. Sign in with its password.');
+    }
+    return db.user.update({ where: { id: existing.id }, data: { passwordHash } });
   }
 
   const member = await db.user.create({
@@ -2870,7 +2873,7 @@ function isStrongPassword(value: string) { return value.length >= 12 && value.le
 function hashPassword(password: string) {
   const salt = randomBytes(16);
   const derived = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
-  return `scrypt$16384$8$1${salt.toString('hex')}${derived.toString('hex')}`;
+  return `scrypt$16384$8$1$${salt.toString('hex')}$${derived.toString('hex')}`;
 }
 
 function verifyPassword(password: string, encoded: string | null) {
