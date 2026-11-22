@@ -18,18 +18,21 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   late final TextEditingController _identityController;
   late final TextEditingController _passwordController;
+  late final TextEditingController _inviteCodeController;
 
   @override
   void initState() {
     super.initState();
     _identityController = TextEditingController();
     _passwordController = TextEditingController();
+    _inviteCodeController = TextEditingController();
   }
 
   @override
   void dispose() {
     _identityController.dispose();
     _passwordController.dispose();
+    _inviteCodeController.dispose();
     super.dispose();
   }
 
@@ -97,6 +100,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       textInputAction: TextInputAction.done,
                       decoration: const InputDecoration(hintText: 'Your account password'),
                     ),
+                    const SizedBox(height: 18),
+                    const Text('Invitation code (new members only)'),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _inviteCodeController,
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(hintText: 'LAB-...'),
+                    ),
                   ],
                 ),
               ),
@@ -113,6 +124,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             );
                       },
                 child: Text(authState.isBusy ? 'Signing in...' : 'Continue'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: authState.isBusy || _inviteCodeController.text.trim().isEmpty
+                    ? null
+                    : () async {
+                        await ref.read(authControllerProvider.notifier).acceptInvitation(
+                          identity: _identityController.text.trim(),
+                          inviteCode: _inviteCodeController.text.trim(),
+                          password: _passwordController.text,
+                        );
+                      },
+                child: const Text('Accept invitation and create account'),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
