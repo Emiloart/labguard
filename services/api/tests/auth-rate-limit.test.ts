@@ -1,20 +1,40 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { readFile } from 'node:fs/promises';
-describe('authentication rate limiting', () => {
-  it('defines persistent atomic PostgreSQL buckets', async () => {
-    const sql = await readFile(new URL('../prisma/migrations/20261122000200_add_auth_rate_limit_buckets/migration.sql', import.meta.url), 'utf8');
-    assert.match(sql, /CREATE TABLE "AuthRateLimitBucket"/);
-    assert.match(sql, /PRIMARY KEY \("key"\)/);
-    assert.match(sql, /windowStartedAt/);
+import { after, before, describe, it } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { prisma } from '../src/common/db/prisma.js';
+import { enforceAuthRateLimits } from '../src/common/auth/auth-rate-limit.js';
+
+describe('PostgreSQL-backed authentication rate limits', () => {
+  before(async () => {
+    await prisma.$executeRaw\`DELETE FROM "AuthRateLimitBucket"\`;
   });
-  it('uses keyed hashes and distinct login and invitation thresholds', async () => {
-    const source = await readFile(new URL('../src/common/auth/auth-rate-limit.ts', import.meta.url), 'utf8');
-    assert.match(source, /createHmac\('sha256'/);
-    assert.match(source, /maximum: 30/);
-    assert.match(source, /maximum: 8/);
-    assert.match(source, /maximum: 10/);
-    assert.match(source, /maximum: 5/);
-    assert.match(source, /ON CONFLICT/);
+
+  after(async () => {
+    await prisma.$executeRaw\`DELETE FROM "AuthRateLimitBucket"\`;
+    await prisma.$disconnect();
+  });
+
+  it('blocks login attempts after the per-identity threshold', async () => {
+    const ip = `192.0.2.${Math.floor(Math.random() * 200) + 1}`;
+    const identity = `rate-limit-${randomUUID()}@example.invalid`;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await enforceAuthRateLimits(ip, identity, 'login');
+    }
+    await assert.rejects(
+      enforceAuthRateLimits(ip, identity, 'login'),
+      (error: unknown) => error != null && typeof error === 'object' && 'statusCode' in error && error.statusCode === 429,
+    );
+  });
+
+  it('blocks invitation redemption attempts after the per-code threshold', async () => {
+    const ip = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
+    const inviteCode = `TEST-${randomUUID()}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await enforceAuthRateLimits(ip, inviteCode, 'invitation');
+    }
+    await assert.rejects(
+      enforceAuthRateLimits(ip, inviteCode, 'invitation'),
+      (error: unknown) => error != null && typeof error === 'object' && 'statusCode' in error && error.statusCode === 429,
+    );
   });
 });

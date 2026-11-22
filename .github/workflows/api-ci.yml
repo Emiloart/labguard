@@ -12,6 +12,24 @@ jobs:
   api:
     name: API typecheck, tests and build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: labguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d labguard"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/labguard?schema=public
+      JWT_ACCESS_SECRET: ci-access-secret-at-least-32-characters
+      JWT_REFRESH_SECRET: ci-refresh-secret-at-least-32-characters
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,6 +42,8 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir services/api prisma:generate
+      - run: pnpm --dir services/api exec prisma db push --schema prisma/schema.prisma --force-reset
+      - run: pnpm --dir services/api exec prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20261122000200_add_auth_rate_limit_buckets/migration.sql
       - run: pnpm --dir services/api test
       - run: pnpm --dir services/api typecheck
       - run: pnpm --dir services/api build
