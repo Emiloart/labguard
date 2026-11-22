@@ -58,13 +58,13 @@ class AuthController extends Notifier<AuthSessionState> {
     state = state.copyWith(stage: AuthStage.signedOut, clearError: true);
   }
 
-  Future<void> signIn({required String identity, String? inviteCode}) async {
+  Future<void> signIn({required String identity, required String password}) async {
     state = state.copyWith(isBusy: true, clearError: true);
 
     try {
       final session = await ref
           .read(authRepositoryProvider)
-          .login(identity: identity, inviteCode: inviteCode);
+          .login(identity: identity, password: password);
       _invalidateAppData();
       state = state.copyWith(
         stage: AuthStage.signedIn,
