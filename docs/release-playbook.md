@@ -14,11 +14,13 @@ Every gate below must pass before a production-tagged build is distributed.
 
 - [ ] Replace development/bootstrap control-plane behavior with reviewed persistent production services for authentication, device state, VPN provisioning, remote command status, and audit storage.
 - [ ] Keep refresh tokens hashed at rest and encrypt VPN private material in the production control plane.
+- [ ] Correct client WireGuard keypair generation and implement authenticated peer registration, removal, and reconciliation on each node before attempting production deployment.
+- [ ] Provision one real WireGuard exit node first and prove end-to-end operation before provisioning the second region.
 - [ ] Provision actual WireGuard exit nodes in **London, United Kingdom** and **San Francisco, United States**.
 - [ ] Configure `VPN_SERVER_LONDON_ENDPOINT`, `VPN_SERVER_LONDON_PUBLIC_KEY`, `VPN_SERVER_LONDON_EXIT_IP` and their `VPN_SERVER_SF_*` equivalents using verified infrastructure values.
 - [ ] Never commit actual secrets, private keys, access tokens, or server credentials. Server private keys must remain on their respective hosts.
 - [ ] Confirm the API and both VPN endpoints are remotely reachable and continue working with the operator laptop powered off.
-- [ ] Confirm each region has a real independent endpoint and server-specific profile; no mock labels, silent fallback, or Casablanca placeholder route.
+- [ ] Confirm each region has a real independent endpoint and server-specific profile, and that the selected node has acknowledged the matching client public key and allowed address; no mock labels, silent fallback, or Casablanca placeholder route.
 - [ ] Confirm real WireGuard handshake, DNS resolution, internet traffic, IPv4/IPv6 behavior, forwarding/NAT, firewall, and MTU behavior.
 - [ ] Verify observed public egress IP matches the selected region's confirmed exit IP.
 - [ ] Only expose a region as ready when its configuration is valid and its health/readiness checks pass.
@@ -108,6 +110,6 @@ If a release regresses VPN safety, device trust enforcement, or remote command h
 
 ## Current Repository Status
 
-The repository contains region configuration fields and readiness logic, but **real London and San Francisco infrastructure values have not been supplied in this workspace**. No real server deployment, endpoint, public key, or exit IP should be assumed. The repo also retains development/bootstrap behavior that needs a production review.
+The repository contains region configuration fields and readiness logic, but **real London and San Francisco infrastructure values have not been supplied in this workspace**. No real server deployment, endpoint, public key, or exit IP should be assumed. A code audit also found that client public keys are generated independently of private keys and that no server peer-registration path exists yet. Therefore, even a provisioned VPS would not currently be enough to make profile issuance work. The repo also retains development/bootstrap behavior that needs a production review.
 
 Until the above gates pass, LabGuard remains an internal engineering/field-test build. Do not describe it as production-ready or advertise unprovisioned regions as available.

@@ -70,6 +70,7 @@ PostgreSQL
 - **Client UI is not proof of tunnel health.** The app must distinguish requested, starting, handshaking, connected/verified, disconnected, and failed states according to signals available from the VPN backend.
 - **VPN traffic does not pass through the API.** The control plane authenticates users/devices and provisions profiles; the deployed WireGuard node carries tunneled traffic.
 - **Region selection must be real.** London and San Francisco need independent deployed endpoints and server-specific WireGuard profiles. A display label or environment variable alone does not make a region ready.
+- **Peer provisioning is part of profile issuance.** The client public key must be cryptographically derived from its corresponding private key, registered on the selected node with the assigned address, acknowledged by that node, and reconciled after node restarts. Persisting a profile in PostgreSQL alone does not configure WireGuard.
 - **Secrets stay on the right side of the boundary.** Server private keys stay on the server. Client private keys must not be exposed in logs or sent to unrelated API clients. The client receives only the server public key and its own authorized client configuration.
 - **Development is not production.** Seed/bootstrap behavior and local endpoints must not be enabled as production authentication or provisioning paths.
 - **Device location is explicit.** Location collection is permissioned and tied to the documented lost-device policy, with limited retention and access.
@@ -100,8 +101,23 @@ A region should be offered only when all required endpoint values are valid and 
 
 Missing configuration must produce an unavailable/not-configured state. It must never silently route the user to a different region or report a mock region as ready.
 
+## WireGuard Peer Lifecycle
+
+The intended lifecycle is:
+
+1. Generate the device's WireGuard keypair using a maintained WireGuard-compatible implementation. Prefer on-device private-key generation and transmit only the public key to the control plane.
+2. Allocate a unique tunnel address within the node's configured address pool.
+3. Authenticate a narrowly scoped control-plane request to the selected node's provisioning interface.
+4. Register the public key and allowed address idempotently on that node.
+5. Require an explicit acknowledgement before marking the profile provisioned/ready.
+6. Deliver the client configuration over the authenticated API; never expose the node's private key.
+7. On rotation or revocation, remove or disable the old peer and reconcile node state.
+8. After node restart, reconcile desired peers from the authoritative control plane without exposing private client material.
+
+The node-management channel must be authenticated, network-restricted, replay-resistant, auditable, and unavailable to ordinary clients. Do not expose arbitrary shell commands or raw WireGuard administration to the public internet.
+
 ## Current Implementation and Known Gaps
 
-Real-device testing has identified UI glitching, loss of internet traffic after VPN activation, overly frequent biometric prompts, and excessive battery consumption. The real London and San Francisco server values and deployment access are not present in the workspace. These are active remediation items, not resolved architecture details.
+Real-device testing has identified UI glitching, loss of internet traffic after VPN activation, overly frequent biometric prompts, and excessive battery consumption. The real London and San Francisco server values and deployment access are not present in the workspace. A code audit found that client public keys are generated independently of private keys and there is no node peer-registration path. The existing region readiness check validates configuration shape, not live node health or peer installation. These are active blockers, not resolved architecture details.
 
 The control plane includes development/bootstrap behavior and must be reviewed for persistent production operation before release. Consult [field-test findings](field-test-findings.md) and [release playbook](release-playbook.md).

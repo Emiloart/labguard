@@ -37,9 +37,10 @@ Real-device testing has identified release-blocking issues:
 - Battery consumption is excessive and needs measurement and profiling.
 - Real exit-node switching is required for **UK — London** and **US — San Francisco**. Those regions are not ready until real server infrastructure is deployed and validated.
 
-The repository does not contain confirmed endpoint, server public key, or exit IP values for those regions. Do not fabricate configuration or claim deployment.
+The repository does not contain confirmed endpoint, server public key, or exit IP values for those regions. A further code audit found that client WireGuard public keys are generated independently of private keys and that server peer registration is not implemented. Consequently, the current profile-issuance path cannot yet establish a valid production tunnel, even after a VPS is provisioned. Do not fabricate configuration or claim deployment.
 
 See:
+- [Field-test findings and remediation plan](docs/field-test-findings.md)
 - [Field-test findings and remediation plan](docs/field-test-findings.md)
 - [P0 authentication hardening](docs/security-p0-auth-hardening.md)
 - [System architecture](docs/architecture.md)
